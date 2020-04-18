@@ -357,7 +357,12 @@ class WebRtcVideoChannel : public VideoMediaChannel,
     void SetSend(bool send);
 
     const std::vector<uint32_t>& GetSsrcs() const;
-    VideoSenderInfo GetVideoSenderInfo(bool log_stats);
+    // Returns per ssrc VideoSenderInfos. Useful for simulcast scenario.
+    std::vector<VideoSenderInfo> GetPerLayerVideoSenderInfos(bool log_stats);
+    // Aggregates per ssrc VideoSenderInfos to single VideoSenderInfo for
+    // legacy reasons. Used in old GetStats API and track stats.
+    VideoSenderInfo GetAggregatedVideoSenderInfo(
+        const std::vector<VideoSenderInfo>& infos) const;
     void FillBitrateInfo(BandwidthEstimationInfo* bwe_info);
 
     void SetEncoderToPacketizerFrameTransformer(
@@ -619,6 +624,10 @@ class WebRtcVideoChannel : public VideoMediaChannel,
   // Per peer connection crypto options that last for the lifetime of the peer
   // connection.
   const webrtc::CryptoOptions crypto_options_ RTC_GUARDED_BY(thread_checker_);
+
+  // Optional frame transformer set on unsignaled streams.
+  rtc::scoped_refptr<webrtc::FrameTransformerInterface>
+      unsignaled_frame_transformer_ RTC_GUARDED_BY(thread_checker_);
 
   // Buffer for unhandled packets.
   std::unique_ptr<UnhandledPacketsBuffer> unknown_ssrc_packet_buffer_

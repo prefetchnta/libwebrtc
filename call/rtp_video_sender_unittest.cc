@@ -117,7 +117,8 @@ class RtpVideoSenderTestFixture {
       const std::vector<uint32_t>& rtx_ssrcs,
       int payload_type,
       const std::map<uint32_t, RtpPayloadState>& suspended_payload_states,
-      FrameCountObserver* frame_count_observer)
+      FrameCountObserver* frame_count_observer,
+      rtc::scoped_refptr<FrameTransformerInterface> frame_transformer)
       : time_controller_(Timestamp::Millis(1000000)),
         config_(CreateVideoSendStreamConfig(&transport_,
                                             ssrcs,
@@ -151,8 +152,22 @@ class RtpVideoSenderTestFixture {
                         &send_delay_stats_),
         &transport_controller_, &event_log_, &retransmission_rate_limiter_,
         std::make_unique<FecControllerDefault>(time_controller_.GetClock()),
-        nullptr, CryptoOptions{}, nullptr);
+        nullptr, CryptoOptions{}, frame_transformer);
   }
+
+  RtpVideoSenderTestFixture(
+      const std::vector<uint32_t>& ssrcs,
+      const std::vector<uint32_t>& rtx_ssrcs,
+      int payload_type,
+      const std::map<uint32_t, RtpPayloadState>& suspended_payload_states,
+      FrameCountObserver* frame_count_observer)
+      : RtpVideoSenderTestFixture(ssrcs,
+                                  rtx_ssrcs,
+                                  payload_type,
+                                  suspended_payload_states,
+                                  frame_count_observer,
+                                  /*frame_transformer=*/nullptr) {}
+
   RtpVideoSenderTestFixture(
       const std::vector<uint32_t>& ssrcs,
       const std::vector<uint32_t>& rtx_ssrcs,
@@ -162,7 +177,8 @@ class RtpVideoSenderTestFixture {
                                   rtx_ssrcs,
                                   payload_type,
                                   suspended_payload_states,
-                                  /*frame_count_observer=*/nullptr) {}
+                                  /*frame_count_observer=*/nullptr,
+                                  /*frame_transformer=*/nullptr) {}
 
   RtpVideoSender* router() { return router_.get(); }
   MockTransport& transport() { return transport_; }
@@ -510,9 +526,9 @@ TEST(RtpVideoSenderTest, RetransmitsOnTransportWideLossInfo) {
   test::NetworkSimulationConfig net_conf;
   net_conf.bandwidth = DataRate::KilobitsPerSec(300);
   auto send_node = s.CreateSimulationNode(net_conf);
+  auto* callee = s.CreateClient("return", call_conf);
   auto* route = s.CreateRoutes(s.CreateClient("send", call_conf), {send_node},
-                               s.CreateClient("return", call_conf),
-                               {s.CreateSimulationNode(net_conf)});
+                               callee, {s.CreateSimulationNode(net_conf)});
 
   test::VideoStreamConfig lossy_config;
   lossy_config.source.framerate = 5;
@@ -540,14 +556,20 @@ TEST(RtpVideoSenderTest, RetransmitsOnTransportWideLossInfo) {
   // from initial probing.
   s.RunFor(TimeDelta::Seconds(1));
   rtx_packets = 0;
-  int decoded_baseline = lossy->receive()->GetStats().frames_decoded;
+  int decoded_baseline = 0;
+  callee->SendTask([&decoded_baseline, &lossy]() {
+    decoded_baseline = lossy->receive()->GetStats().frames_decoded;
+  });
   s.RunFor(TimeDelta::Seconds(1));
   // We expect both that RTX packets were sent and that an appropriate number of
   // frames were received. This is somewhat redundant but reduces the risk of
   // false positives in future regressions (e.g. RTX is send due to probing).
   EXPECT_GE(rtx_packets, 1);
-  int frames_decoded =
-      lossy->receive()->GetStats().frames_decoded - decoded_baseline;
+  int frames_decoded = 0;
+  callee->SendTask([&decoded_baseline, &frames_decoded, &lossy]() {
+    frames_decoded =
+        lossy->receive()->GetStats().frames_decoded - decoded_baseline;
+  });
   EXPECT_EQ(frames_decoded, 5);
 }
 
@@ -800,5 +822,29 @@ TEST(RtpVideoSenderTest, CanSetZeroBitrateWithoutOverhead) {
   update.round_trip_time = TimeDelta::Zero();
 
   test.router()->OnBitrateUpdated(update, /*framerate*/ 0);
+}
+
+TEST(RtpVideoSenderTest, SimulcastSenderRegistersFrameTransformers) {
+  class MockFrameTransformer : public FrameTransformerInterface {
+   public:
+    MOCK_METHOD3(TransformFrame,
+                 void(std::unique_ptr<video_coding::EncodedFrame> frame,
+                      std::vector<uint8_t> additional_data,
+                      uint32_t ssrc));
+    MOCK_METHOD2(RegisterTransformedFrameSinkCallback,
+                 void(rtc::scoped_refptr<TransformedFrameCallback>, uint32_t));
+    MOCK_METHOD1(UnregisterTransformedFrameSinkCallback, void(uint32_t));
+  };
+
+  rtc::scoped_refptr<MockFrameTransformer> transformer =
+      new rtc::RefCountedObject<MockFrameTransformer>();
+
+  EXPECT_CALL(*transformer, RegisterTransformedFrameSinkCallback(_, kSsrc1));
+  EXPECT_CALL(*transformer, RegisterTransformedFrameSinkCallback(_, kSsrc2));
+  RtpVideoSenderTestFixture test({kSsrc1, kSsrc2}, {kRtxSsrc1, kRtxSsrc2},
+                                 kPayloadType, {}, nullptr, transformer);
+
+  EXPECT_CALL(*transformer, UnregisterTransformedFrameSinkCallback(kSsrc1));
+  EXPECT_CALL(*transformer, UnregisterTransformedFrameSinkCallback(kSsrc2));
 }
 }  // namespace webrtc

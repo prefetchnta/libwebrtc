@@ -234,6 +234,7 @@ rtc_library("video_adaptation") {
   sources = [
     "video_adaptation_counters.cc",
     "video_adaptation_counters.h",
+    "video_adaptation_reason.h",
   ]
 
   deps = [ "../../rtc_base:checks" ]
@@ -243,12 +244,12 @@ rtc_source_set("video_stream_encoder") {
   visibility = [ "*" ]
   sources = [
     "video_stream_encoder_interface.h",
-    "video_stream_encoder_observer.cc",
     "video_stream_encoder_observer.h",
     "video_stream_encoder_settings.h",
   ]
 
   deps = [
+    ":video_adaptation",
     ":video_bitrate_allocation",
     ":video_bitrate_allocator",
     ":video_bitrate_allocator_factory",

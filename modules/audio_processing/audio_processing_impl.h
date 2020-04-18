@@ -44,7 +44,6 @@
 namespace webrtc {
 
 class ApmDataDumper;
-class AudioFrame;
 class AudioConverter;
 
 class AudioProcessingImpl : public AudioProcessing {
@@ -70,7 +69,6 @@ class AudioProcessingImpl : public AudioProcessing {
   int Initialize(const ProcessingConfig& processing_config) override;
   void ApplyConfig(const AudioProcessing::Config& config) override;
   void SetExtraOptions(const webrtc::Config& config) override;
-  void UpdateHistogramsOnCallEnd() override;
   void AttachAecDump(std::unique_ptr<AecDump> aec_dump) override;
   void DetachAecDump() override;
   void AttachPlayoutAudioGenerator(
@@ -81,9 +79,6 @@ class AudioProcessingImpl : public AudioProcessing {
 
   // Capture-side exclusive methods possibly running APM in a
   // multi-threaded manner. Acquire the capture lock.
-  int ProcessStream(AudioFrame* frame) override {
-    return ProcessAudioFrame(this, frame);
-  }
   int ProcessStream(const int16_t* const src,
                     const StreamConfig& input_config,
                     const StreamConfig& output_config,
@@ -102,9 +97,6 @@ class AudioProcessingImpl : public AudioProcessing {
 
   // Render-side exclusive methods possibly running APM in a
   // multi-threaded manner. Acquire the render lock.
-  int ProcessReverseStream(AudioFrame* frame) override {
-    return ProcessReverseAudioFrame(this, frame);
-  }
   int ProcessReverseStream(const int16_t* const src,
                            const StreamConfig& input_config,
                            const StreamConfig& output_config,

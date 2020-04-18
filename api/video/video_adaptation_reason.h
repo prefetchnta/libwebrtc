@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2018 The WebRTC project authors. All Rights Reserved.
+ *  Copyright (c) 2020 The WebRTC project authors. All Rights Reserved.
  *
  *  Use of this source code is governed by a BSD-style license
  *  that can be found in the LICENSE file in the root of the source
@@ -8,10 +8,13 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "api/video/video_stream_encoder_observer.h"
+#ifndef API_VIDEO_VIDEO_ADAPTATION_REASON_H_
+#define API_VIDEO_VIDEO_ADAPTATION_REASON_H_
 
 namespace webrtc {
 
-VideoStreamEncoderObserver::AdaptationSteps::AdaptationSteps() = default;
+enum class VideoAdaptationReason { kQuality, kCpu };
 
 }  // namespace webrtc
+
+#endif  // API_VIDEO_VIDEO_ADAPTATION_REASON_H_

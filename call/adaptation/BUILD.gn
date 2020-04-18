@@ -12,25 +12,31 @@ rtc_library("resource_adaptation") {
   sources = [
     "encoder_settings.cc",
     "encoder_settings.h",
-    "new_resource_adaptation_processor_poc.cc",
-    "new_resource_adaptation_processor_poc.h",
     "resource.cc",
     "resource.h",
+    "resource_adaptation_processor.cc",
+    "resource_adaptation_processor.h",
     "resource_adaptation_processor_interface.cc",
     "resource_adaptation_processor_interface.h",
-    "resource_consumer.cc",
-    "resource_consumer.h",
-    "resource_consumer_configuration.cc",
-    "resource_consumer_configuration.h",
     "video_source_restrictions.cc",
     "video_source_restrictions.h",
+    "video_stream_adapter.cc",
+    "video_stream_adapter.h",
+    "video_stream_input_state.cc",
+    "video_stream_input_state.h",
+    "video_stream_input_state_provider.cc",
+    "video_stream_input_state_provider.h",
   ]
   deps = [
     "../../api:rtp_parameters",
+    "../../api/video:video_adaptation",
     "../../api/video:video_frame",
+    "../../api/video:video_stream_encoder",
     "../../api/video_codecs:video_codecs_api",
+    "../../modules/video_coding:video_coding_utility",
     "../../rtc_base:checks",
     "../../rtc_base:rtc_base_approved",
+    "../../rtc_base/experiments:balanced_degradation_settings",
     "//third_party/abseil-cpp/absl/algorithm:container",
     "//third_party/abseil-cpp/absl/types:optional",
   ]
@@ -41,14 +47,18 @@ if (rtc_include_tests) {
     testonly = true
 
     sources = [
-      "new_resource_adaptation_processor_poc_unittest.cc",
       "resource_unittest.cc",
+      "video_stream_adapter_unittest.cc",
     ]
     deps = [
       ":resource_adaptation",
       ":resource_adaptation_test_utilities",
+      "../../api/video:video_adaptation",
+      "../../api/video_codecs:video_codecs_api",
       "../../rtc_base:checks",
       "../../rtc_base:rtc_base_approved",
+      "../../test:field_trial",
+      "../../test:rtc_expect_death",
       "../../test:test_support",
       "//third_party/abseil-cpp/absl/types:optional",
     ]
@@ -60,8 +70,6 @@ if (rtc_include_tests) {
     sources = [
       "test/fake_resource.cc",
       "test/fake_resource.h",
-      "test/fake_resource_consumer_configuration.cc",
-      "test/fake_resource_consumer_configuration.h",
     ]
     deps = [
       ":resource_adaptation",

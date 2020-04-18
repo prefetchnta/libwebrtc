@@ -285,7 +285,8 @@ RtpVideoStreamReceiver::RtpVideoStreamReceiver(
   if (frame_transformer) {
     frame_transformer_delegate_ = new rtc::RefCountedObject<
         RtpVideoStreamReceiverFrameTransformerDelegate>(
-        this, std::move(frame_transformer), rtc::Thread::Current());
+        this, std::move(frame_transformer), rtc::Thread::Current(),
+        config_.rtp.remote_ssrc);
     frame_transformer_delegate_->Init();
   }
 }
@@ -411,19 +412,9 @@ RtpVideoStreamReceiver::ParseGenericDependenciesExtension(
     return kHasGenericDescriptor;
   }
 
-  if (rtp_packet.HasExtension<RtpGenericFrameDescriptorExtension00>() &&
-      rtp_packet.HasExtension<RtpGenericFrameDescriptorExtension01>()) {
-    RTC_LOG(LS_WARNING) << "RTP packet had two different GFD versions.";
-    return kDropPacket;
-  }
-
   RtpGenericFrameDescriptor generic_frame_descriptor;
-  bool has_generic_descriptor =
-      rtp_packet.GetExtension<RtpGenericFrameDescriptorExtension01>(
-          &generic_frame_descriptor) ||
-      rtp_packet.GetExtension<RtpGenericFrameDescriptorExtension00>(
-          &generic_frame_descriptor);
-  if (!has_generic_descriptor) {
+  if (!rtp_packet.GetExtension<RtpGenericFrameDescriptorExtension00>(
+          &generic_frame_descriptor)) {
     return kNoGenericDescriptor;
   }
 
@@ -446,8 +437,6 @@ RtpVideoStreamReceiver::ParseGenericDependenciesExtension(
         generic_frame_descriptor.SpatialLayer();
     generic_descriptor_info.temporal_index =
         generic_frame_descriptor.TemporalLayer();
-    generic_descriptor_info.discardable =
-        generic_frame_descriptor.Discardable().value_or(false);
     for (uint16_t fdiff : generic_frame_descriptor.FrameDependenciesDiffs()) {
       generic_descriptor_info.dependencies.push_back(frame_id - fdiff);
     }
@@ -837,8 +826,7 @@ void RtpVideoStreamReceiver::OnAssembledFrame(
   if (buffered_frame_decryptor_ != nullptr) {
     buffered_frame_decryptor_->ManageEncryptedFrame(std::move(frame));
   } else if (frame_transformer_delegate_) {
-    frame_transformer_delegate_->TransformFrame(std::move(frame),
-                                                config_.rtp.remote_ssrc);
+    frame_transformer_delegate_->TransformFrame(std::move(frame));
   } else {
     reference_finder_->ManageFrame(std::move(frame));
   }
@@ -884,15 +872,11 @@ void RtpVideoStreamReceiver::SetFrameDecryptor(
 void RtpVideoStreamReceiver::SetDepacketizerToDecoderFrameTransformer(
     rtc::scoped_refptr<FrameTransformerInterface> frame_transformer) {
   RTC_DCHECK_RUN_ON(&network_tc_);
-  if (!frame_transformer_delegate_) {
-    frame_transformer_delegate_ = new rtc::RefCountedObject<
-        RtpVideoStreamReceiverFrameTransformerDelegate>(
-        this, std::move(frame_transformer), rtc::Thread::Current());
-    frame_transformer_delegate_->Init();
-  } else {
-    RTC_LOG(LS_ERROR)
-        << "Attempting to replace an existing frame transformer in a receiver";
-  }
+  frame_transformer_delegate_ =
+      new rtc::RefCountedObject<RtpVideoStreamReceiverFrameTransformerDelegate>(
+          this, std::move(frame_transformer), rtc::Thread::Current(),
+          config_.rtp.remote_ssrc);
+  frame_transformer_delegate_->Init();
 }
 
 void RtpVideoStreamReceiver::UpdateRtt(int64_t max_rtt_ms) {
