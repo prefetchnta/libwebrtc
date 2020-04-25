@@ -193,6 +193,7 @@ if (rtc_include_tests) {
       "../../../api/video:video_frame",
       "../../../api/video:video_rtp_headers",
       "../../../api/video_codecs:video_codecs_api",
+      "../../../rtc_base:criticalsection",
       "../../../test:video_test_common",
       "../../../test:video_test_support",
       "//third_party/abseil-cpp/absl/memory",
@@ -272,7 +273,6 @@ if (rtc_include_tests) {
       "../..:fileutils",
       "../..:platform_video_capturer",
       "../..:video_test_common",
-      "../..:video_test_support",
       "../../../api:create_frame_generator",
       "../../../api:frame_generator_api",
       "../../../api:peer_connection_quality_test_fixture_api",
@@ -455,6 +455,7 @@ if (rtc_include_tests) {
   }
 
   rtc_library("stats_poller") {
+    visibility = [ "*" ]
     testonly = true
     sources = [
       "stats_poller.cc",
@@ -599,6 +600,7 @@ rtc_library("network_quality_metrics_reporter") {
 }
 
 rtc_library("sdp_changer") {
+  visibility = [ "*" ]
   testonly = true
   sources = [
     "sdp/sdp_changer.cc",
