@@ -17,6 +17,7 @@
 #include "api/video/video_adaptation_reason.h"
 #include "api/video_codecs/video_encoder.h"
 #include "call/adaptation/resource.h"
+#include "call/adaptation/resource_adaptation_processor_interface.h"
 #include "modules/video_coding/utility/quality_scaler.h"
 
 namespace webrtc {
@@ -26,12 +27,11 @@ namespace webrtc {
 // indirectly by usage in the ResourceAdaptationProcessor (which is only tested
 // because of its usage in VideoStreamEncoder); all tests are currently in
 // video_stream_encoder_unittest.cc.
-// TODO(https://crbug.com/webrtc/11222): Move this class to the
-// video/adaptation/ subdirectory.
 class QualityScalerResource : public Resource,
-                              public AdaptationObserverInterface {
+                              public QualityScalerQpUsageHandlerInterface {
  public:
-  QualityScalerResource();
+  explicit QualityScalerResource(
+      ResourceAdaptationProcessorInterface* adaptation_processor);
 
   bool is_started() const;
 
@@ -44,16 +44,27 @@ class QualityScalerResource : public Resource,
                          int64_t time_sent_in_us);
   void OnFrameDropped(EncodedImageCallback::DropReason reason);
 
-  // AdaptationObserverInterface implementation.
-  // TODO(https://crbug.com/webrtc/11222, 11172): This resource also needs to
-  // signal when its stable to support multi-stream aware modules.
-  void AdaptUp(VideoAdaptationReason reason) override;
-  bool AdaptDown(VideoAdaptationReason reason) override;
+  // QualityScalerQpUsageHandlerInterface implementation.
+  void OnReportQpUsageHigh(
+      rtc::scoped_refptr<QualityScalerQpUsageHandlerCallbackInterface> callback)
+      override;
+  void OnReportQpUsageLow(
+      rtc::scoped_refptr<QualityScalerQpUsageHandlerCallbackInterface> callback)
+      override;
 
   std::string name() const override { return "QualityScalerResource"; }
 
+  // Resource implementation.
+  void OnAdaptationApplied(const VideoStreamInputState& input_state,
+                           const VideoSourceRestrictions& restrictions_before,
+                           const VideoSourceRestrictions& restrictions_after,
+                           const Resource& reason_resource) override;
+
  private:
+  ResourceAdaptationProcessorInterface* const adaptation_processor_;
   std::unique_ptr<QualityScaler> quality_scaler_;
+  rtc::scoped_refptr<QualityScalerQpUsageHandlerCallbackInterface>
+      pending_qp_usage_callback_;
 };
 
 }  // namespace webrtc

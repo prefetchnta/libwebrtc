@@ -29,7 +29,6 @@
 #include "api/video_codecs/video_encoder.h"
 #include "api/video_codecs/video_encoder_config.h"
 #include "call/adaptation/resource.h"
-#include "call/adaptation/resource_adaptation_processor.h"
 #include "call/adaptation/resource_adaptation_processor_interface.h"
 #include "call/adaptation/video_stream_adapter.h"
 #include "call/adaptation/video_stream_input_state_provider.h"
@@ -62,7 +61,7 @@ class VideoStreamEncoderResourceManager
  public:
   VideoStreamEncoderResourceManager(
       VideoStreamInputStateProvider* input_state_provider,
-      ResourceAdaptationProcessor* adaptation_processor,
+      ResourceAdaptationProcessorInterface* adaptation_processor,
       VideoStreamEncoderObserver* encoder_stats_observer,
       Clock* clock,
       bool experiment_cpu_load_estimator,
@@ -106,6 +105,7 @@ class VideoStreamEncoderResourceManager
   // TODO(hbos): Can we get rid of this?
   void MapResourceToReason(Resource* resource, VideoAdaptationReason reason);
   std::vector<Resource*> MappedResources() const;
+  QualityScalerResource* quality_scaler_resource_for_testing();
   // If true, the VideoStreamEncoder should eexecute its logic to maybe drop
   // frames baseed on size and bitrate.
   bool DropInitialFrames() const;
@@ -133,11 +133,6 @@ class VideoStreamEncoderResourceManager
   class InitialFrameDropper;
 
   VideoAdaptationReason GetReasonFromResource(const Resource& resource) const;
-
-  // Performs the adaptation by getting the next target, applying it and
-  // informing listeners of the new VideoSourceRestriction and adapt counters.
-  void OnResourceUnderuse(const Resource& reason_resource);
-  ResourceListenerResponse OnResourceOveruse(const Resource& reason_resource);
 
   CpuOveruseOptions GetCpuOveruseOptions() const;
   int LastInputFrameSizeOrDefault() const;
@@ -167,6 +162,9 @@ class VideoStreamEncoderResourceManager
 
   void ResetActiveCounts();
   std::string ActiveCountsToString() const;
+
+  // TODO(hbos): Consider moving all of the manager's resources into separate
+  // files for testability.
 
   // Does not trigger adaptations, only prevents adapting up based on
   // |active_counts_|.
@@ -236,7 +234,7 @@ class VideoStreamEncoderResourceManager
   QualityScalerResource quality_scaler_resource_;
 
   VideoStreamInputStateProvider* const input_state_provider_;
-  ResourceAdaptationProcessor* const adaptation_processor_;
+  ResourceAdaptationProcessorInterface* const adaptation_processor_;
   VideoStreamEncoderObserver* const encoder_stats_observer_;
 
   DegradationPreference degradation_preference_;

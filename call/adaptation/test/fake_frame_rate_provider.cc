@@ -8,20 +8,20 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "modules/audio_processing/transient/transient_suppressor_creator.h"
+#include "call/adaptation/test/fake_frame_rate_provider.h"
 
-#include <memory>
+#include "test/gmock.h"
 
-#include "modules/audio_processing/transient/transient_suppressor_impl.h"
+using ::testing::Return;
 
 namespace webrtc {
 
-std::unique_ptr<TransientSuppressor> CreateTransientSuppressor() {
-#ifdef WEBRTC_EXCLUDE_TRANSIENT_SUPPRESSOR
-  return nullptr;
-#else
-  return std::make_unique<TransientSuppressorImpl>();
-#endif
+FakeFrameRateProvider::FakeFrameRateProvider() {
+  set_fps(0);
+}
+
+void FakeFrameRateProvider::set_fps(int fps) {
+  EXPECT_CALL(*this, GetInputFrameRate()).WillRepeatedly(Return(fps));
 }
 
 }  // namespace webrtc

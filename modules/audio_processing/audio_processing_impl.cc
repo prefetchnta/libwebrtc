@@ -27,7 +27,7 @@
 #include "modules/audio_processing/common.h"
 #include "modules/audio_processing/include/audio_frame_view.h"
 #include "modules/audio_processing/logging/apm_data_dumper.h"
-#include "modules/audio_processing/transient/transient_suppressor_creator.h"
+#include "modules/audio_processing/optionally_built_submodule_creators.h"
 #include "rtc_base/atomic_ops.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/constructor_magic.h"
@@ -227,56 +227,6 @@ bool AudioProcessingImpl::SubmoduleStates::RenderMultiBandProcessingActive()
 bool AudioProcessingImpl::SubmoduleStates::HighPassFilteringRequired() const {
   return high_pass_filter_enabled_ || mobile_echo_controller_enabled_ ||
          noise_suppressor_enabled_;
-}
-
-AudioProcessingBuilder::AudioProcessingBuilder() = default;
-AudioProcessingBuilder::~AudioProcessingBuilder() = default;
-
-AudioProcessingBuilder& AudioProcessingBuilder::SetCapturePostProcessing(
-    std::unique_ptr<CustomProcessing> capture_post_processing) {
-  capture_post_processing_ = std::move(capture_post_processing);
-  return *this;
-}
-
-AudioProcessingBuilder& AudioProcessingBuilder::SetRenderPreProcessing(
-    std::unique_ptr<CustomProcessing> render_pre_processing) {
-  render_pre_processing_ = std::move(render_pre_processing);
-  return *this;
-}
-
-AudioProcessingBuilder& AudioProcessingBuilder::SetCaptureAnalyzer(
-    std::unique_ptr<CustomAudioAnalyzer> capture_analyzer) {
-  capture_analyzer_ = std::move(capture_analyzer);
-  return *this;
-}
-
-AudioProcessingBuilder& AudioProcessingBuilder::SetEchoControlFactory(
-    std::unique_ptr<EchoControlFactory> echo_control_factory) {
-  echo_control_factory_ = std::move(echo_control_factory);
-  return *this;
-}
-
-AudioProcessingBuilder& AudioProcessingBuilder::SetEchoDetector(
-    rtc::scoped_refptr<EchoDetector> echo_detector) {
-  echo_detector_ = std::move(echo_detector);
-  return *this;
-}
-
-AudioProcessing* AudioProcessingBuilder::Create() {
-  webrtc::Config config;
-  return Create(config);
-}
-
-AudioProcessing* AudioProcessingBuilder::Create(const webrtc::Config& config) {
-  AudioProcessingImpl* apm = new rtc::RefCountedObject<AudioProcessingImpl>(
-      config, std::move(capture_post_processing_),
-      std::move(render_pre_processing_), std::move(echo_control_factory_),
-      std::move(echo_detector_), std::move(capture_analyzer_));
-  if (apm->Initialize() != AudioProcessing::kNoError) {
-    delete apm;
-    apm = nullptr;
-  }
-  return apm;
 }
 
 AudioProcessingImpl::AudioProcessingImpl(const webrtc::Config& config)
@@ -689,6 +639,12 @@ void AudioProcessingImpl::ApplyConfig(const AudioProcessing::Config& config) {
 
 // TODO(webrtc:5298): Remove.
 void AudioProcessingImpl::SetExtraOptions(const webrtc::Config& config) {}
+
+void AudioProcessingImpl::OverrideSubmoduleCreationForTesting(
+    const ApmSubmoduleCreationOverrides& overrides) {
+  rtc::CritScope cs(&crit_capture_);
+  submodule_creation_overrides_ = overrides;
+}
 
 int AudioProcessingImpl::proc_sample_rate_hz() const {
   // Used as callback from submodules, hence locking is not allowed.
@@ -1638,7 +1594,8 @@ void AudioProcessingImpl::InitializeTransientSuppressor() {
   if (config_.transient_suppression.enabled) {
     // Attempt to create a transient suppressor, if one is not already created.
     if (!submodules_.transient_suppressor) {
-      submodules_.transient_suppressor = CreateTransientSuppressor();
+      submodules_.transient_suppressor =
+          CreateTransientSuppressor(submodule_creation_overrides_);
     }
     if (submodules_.transient_suppressor) {
       submodules_.transient_suppressor->Initialize(
