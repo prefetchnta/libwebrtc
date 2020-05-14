@@ -15,8 +15,11 @@
 #include <vector>
 
 #include "absl/types/optional.h"
+#include "api/scoped_refptr.h"
 #include "call/adaptation/video_source_restrictions.h"
 #include "call/adaptation/video_stream_input_state.h"
+#include "rtc_base/ref_count.h"
+#include "rtc_base/task_queue.h"
 
 namespace webrtc {
 
@@ -34,15 +37,19 @@ class ResourceListener {
   virtual ~ResourceListener();
 
   // Informs the listener of a new measurement of resource usage. This means
-  // that |resource.usage_state()| is now up-to-date.
-  virtual void OnResourceUsageStateMeasured(const Resource& resource) = 0;
+  // that |resource->usage_state()| is now up-to-date.
+  virtual void OnResourceUsageStateMeasured(
+      rtc::scoped_refptr<Resource> resource) = 0;
 };
 
-class Resource {
+class Resource : public rtc::RefCountInterface {
  public:
   // By default, usage_state() is null until a measurement is made.
   Resource();
-  virtual ~Resource();
+  ~Resource() override;
+
+  void Initialize(rtc::TaskQueue* encoder_queue,
+                  rtc::TaskQueue* resource_adaptation_queue);
 
   void SetResourceListener(ResourceListener* listener);
 
@@ -56,22 +63,28 @@ class Resource {
       const VideoStreamInputState& input_state,
       const VideoSourceRestrictions& restrictions_before,
       const VideoSourceRestrictions& restrictions_after,
-      const Resource& reason_resource) const;
+      rtc::scoped_refptr<Resource> reason_resource) const;
   virtual void OnAdaptationApplied(
       const VideoStreamInputState& input_state,
       const VideoSourceRestrictions& restrictions_before,
       const VideoSourceRestrictions& restrictions_after,
-      const Resource& reason_resource);
+      rtc::scoped_refptr<Resource> reason_resource);
 
   virtual std::string name() const = 0;
 
  protected:
+  rtc::TaskQueue* encoder_queue() const;
+  rtc::TaskQueue* resource_adaptation_queue() const;
+
   // Updates the usage state and informs all registered listeners.
   void OnResourceUsageStateMeasured(ResourceUsageState usage_state);
 
  private:
-  absl::optional<ResourceUsageState> usage_state_;
-  ResourceListener* listener_;
+  rtc::TaskQueue* encoder_queue_;
+  rtc::TaskQueue* resource_adaptation_queue_;
+  absl::optional<ResourceUsageState> usage_state_
+      RTC_GUARDED_BY(resource_adaptation_queue_);
+  ResourceListener* listener_ RTC_GUARDED_BY(resource_adaptation_queue_);
 };
 
 }  // namespace webrtc

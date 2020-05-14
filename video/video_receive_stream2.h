@@ -16,6 +16,7 @@
 
 #include "api/task_queue/task_queue_factory.h"
 #include "api/transport/media/media_transport_interface.h"
+#include "api/units/timestamp.h"
 #include "api/video/recordable_encoded_frame.h"
 #include "call/rtp_packet_sink_interface.h"
 #include "call/syncable.h"
@@ -28,14 +29,13 @@
 #include "rtc_base/task_queue.h"
 #include "system_wrappers/include/clock.h"
 #include "video/receive_statistics_proxy2.h"
-#include "video/rtp_streams_synchronizer.h"
+#include "video/rtp_streams_synchronizer2.h"
 #include "video/rtp_video_stream_receiver.h"
 #include "video/transport_adapter.h"
 #include "video/video_stream_decoder2.h"
 
 namespace webrtc {
 
-class CallStats;
 class ProcessThread;
 class RTPFragmentationHeader;
 class RtpStreamReceiverInterface;
@@ -44,6 +44,35 @@ class RtxReceiveStream;
 class VCMTiming;
 
 namespace internal {
+
+class CallStats;
+
+// Utility struct for grabbing metadata from a VideoFrame and processing it
+// asynchronously without needing the actual frame data.
+// Additionally the caller can bundle information from the current clock
+// when the metadata is captured, for accurate reporting and not needeing
+// multiple calls to clock->Now().
+struct VideoFrameMetaData {
+  VideoFrameMetaData(const webrtc::VideoFrame& frame, Timestamp now)
+      : rtp_timestamp(frame.timestamp()),
+        timestamp_us(frame.timestamp_us()),
+        ntp_time_ms(frame.ntp_time_ms()),
+        width(frame.width()),
+        height(frame.height()),
+        decode_timestamp(now) {}
+
+  int64_t render_time_ms() const {
+    return timestamp_us / rtc::kNumMicrosecsPerMillisec;
+  }
+
+  const uint32_t rtp_timestamp;
+  const int64_t timestamp_us;
+  const int64_t ntp_time_ms;
+  const int width;
+  const int height;
+
+  const Timestamp decode_timestamp;
+};
 
 class VideoReceiveStream2 : public webrtc::VideoReceiveStream,
                             public rtc::VideoSinkInterface<VideoFrame>,
@@ -57,6 +86,7 @@ class VideoReceiveStream2 : public webrtc::VideoReceiveStream,
   static constexpr int kMaxWaitForKeyFrameMs = 200;
 
   VideoReceiveStream2(TaskQueueFactory* task_queue_factory,
+                      TaskQueueBase* current_queue,
                       RtpStreamReceiverControllerInterface* receiver_controller,
                       int num_cpu_cores,
                       PacketRouter* packet_router,
@@ -65,14 +95,6 @@ class VideoReceiveStream2 : public webrtc::VideoReceiveStream,
                       CallStats* call_stats,
                       Clock* clock,
                       VCMTiming* timing);
-  VideoReceiveStream2(TaskQueueFactory* task_queue_factory,
-                      RtpStreamReceiverControllerInterface* receiver_controller,
-                      int num_cpu_cores,
-                      PacketRouter* packet_router,
-                      VideoReceiveStream::Config config,
-                      ProcessThread* process_thread,
-                      CallStats* call_stats,
-                      Clock* clock);
   ~VideoReceiveStream2() override;
 
   const Config& config() const { return config_; }
@@ -160,7 +182,7 @@ class VideoReceiveStream2 : public webrtc::VideoReceiveStream,
   TransportAdapter transport_adapter_;
   const VideoReceiveStream::Config config_;
   const int num_cpu_cores_;
-  ProcessThread* const process_thread_;
+  TaskQueueBase* const worker_thread_;
   Clock* const clock_;
 
   CallStats* const call_stats_;
@@ -231,6 +253,9 @@ class VideoReceiveStream2 : public webrtc::VideoReceiveStream,
 
   // Defined last so they are destroyed before all other members.
   rtc::TaskQueue decode_queue_;
+
+  // Used to signal destruction to potentially pending tasks.
+  ScopedTaskSafety task_safety_;
 };
 }  // namespace internal
 }  // namespace webrtc

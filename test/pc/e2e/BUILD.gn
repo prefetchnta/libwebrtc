@@ -222,12 +222,15 @@ if (rtc_include_tests) {
       "test_peer.h",
     ]
     deps = [
+      ":peer_configurer",
       ":peer_connection_quality_test_params",
       "../../../api:frame_generator_api",
+      "../../../api:peer_connection_quality_test_fixture_api",
       "../../../api:scoped_refptr",
       "../../../modules/audio_processing:api",
       "../../../pc:peerconnection_wrapper",
       "//third_party/abseil-cpp/absl/memory",
+      "//third_party/abseil-cpp/absl/types:variant",
     ]
   }
 
@@ -240,7 +243,9 @@ if (rtc_include_tests) {
     ]
     deps = [
       ":echo_emulation",
+      ":peer_configurer",
       ":peer_connection_quality_test_params",
+      ":quality_analyzing_video_encoder",
       ":test_peer",
       ":video_quality_analyzer_injection_helper",
       "../..:copy_to_file_audio_capturer",
@@ -256,6 +261,7 @@ if (rtc_include_tests) {
       "../../../p2p:rtc_p2p",
       "../../../rtc_base:rtc_task_queue",
       "//third_party/abseil-cpp/absl/memory",
+      "//third_party/abseil-cpp/absl/strings",
     ]
   }
 
@@ -268,6 +274,7 @@ if (rtc_include_tests) {
       "media/test_video_capturer_video_track_source.h",
     ]
     deps = [
+      ":peer_configurer",
       ":test_peer",
       ":video_quality_analyzer_injection_helper",
       "../..:fileutils",
@@ -275,9 +282,11 @@ if (rtc_include_tests) {
       "../..:video_test_common",
       "../../../api:create_frame_generator",
       "../../../api:frame_generator_api",
+      "../../../api:media_stream_interface",
       "../../../api:peer_connection_quality_test_fixture_api",
       "../../../api/video:video_frame",
       "../../../pc:peerconnection",
+      "//third_party/abseil-cpp/absl/types:variant",
     ]
   }
 
@@ -292,6 +301,7 @@ if (rtc_include_tests) {
       ":peer_connection_quality_test_params",
       "../..:fileutils",
       "../../../api:callfactory_api",
+      "../../../api:create_peer_connection_quality_test_frame_generator",
       "../../../api:fec_controller_api",
       "../../../api:packet_socket_factory",
       "../../../api:peer_connection_quality_test_fixture_api",
@@ -301,6 +311,7 @@ if (rtc_include_tests) {
       "../../../api/transport/media:media_transport_interface",
       "../../../api/video_codecs:video_codecs_api",
       "../../../rtc_base",
+      "//third_party/abseil-cpp/absl/strings",
     ]
   }
 
@@ -424,8 +435,10 @@ if (rtc_include_tests) {
       ":network_quality_metrics_reporter",
       "../../../api:callfactory_api",
       "../../../api:create_network_emulation_manager",
+      "../../../api:create_peer_connection_quality_test_frame_generator",
       "../../../api:create_peerconnection_quality_test_fixture",
       "../../../api:libjingle_peerconnection_api",
+      "../../../api:media_stream_interface",
       "../../../api:network_emulation_manager_api",
       "../../../api:peer_connection_quality_test_fixture_api",
       "../../../api:scoped_refptr",

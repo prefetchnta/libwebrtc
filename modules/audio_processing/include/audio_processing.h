@@ -24,16 +24,21 @@
 #include <vector>
 
 #include "absl/types/optional.h"
+#include "api/array_view.h"
 #include "api/audio/echo_canceller3_config.h"
 #include "api/audio/echo_control.h"
 #include "api/scoped_refptr.h"
-#include "modules/audio_processing/include/audio_generator.h"
 #include "modules/audio_processing/include/audio_processing_statistics.h"
 #include "modules/audio_processing/include/config.h"
 #include "rtc_base/arraysize.h"
 #include "rtc_base/deprecation.h"
 #include "rtc_base/ref_count.h"
+#include "rtc_base/system/file_wrapper.h"
 #include "rtc_base/system/rtc_export.h"
+
+namespace rtc {
+class TaskQueue;
+}  // namespace rtc
 
 namespace webrtc {
 
@@ -600,6 +605,23 @@ class RTC_EXPORT AudioProcessing : public rtc::RefCountInterface {
   // with this chunk of audio.
   virtual void set_stream_key_pressed(bool key_pressed) = 0;
 
+  // Creates and attaches an webrtc::AecDump for recording debugging
+  // information.
+  // The |worker_queue| may not be null and must outlive the created
+  // AecDump instance. |max_log_size_bytes == -1| means the log size
+  // will be unlimited. |handle| may not be null. The AecDump takes
+  // responsibility for |handle| and closes it in the destructor. A
+  // return value of true indicates that the file has been
+  // sucessfully opened, while a value of false indicates that
+  // opening the file failed.
+  virtual bool CreateAndAttachAecDump(const std::string& file_name,
+                                      int64_t max_log_size_bytes,
+                                      rtc::TaskQueue* worker_queue) = 0;
+  virtual bool CreateAndAttachAecDump(FILE* handle,
+                                      int64_t max_log_size_bytes,
+                                      rtc::TaskQueue* worker_queue) = 0;
+
+  // TODO(webrtc:5298) Deprecated variant.
   // Attaches provided webrtc::AecDump for recording debugging
   // information. Log file and maximum file size logic is supposed to
   // be handled by implementing instance of AecDump. Calling this
@@ -613,16 +635,6 @@ class RTC_EXPORT AudioProcessing : public rtc::RefCountInterface {
   // attached, it's destructor is called. The d-tor may block until
   // all pending logging tasks are completed.
   virtual void DetachAecDump() = 0;
-
-  // Attaches provided webrtc::AudioGenerator for modifying playout audio.
-  // Calling this method when another AudioGenerator is attached replaces the
-  // active AudioGenerator with a new one.
-  virtual void AttachPlayoutAudioGenerator(
-      std::unique_ptr<AudioGenerator> audio_generator) = 0;
-
-  // If no AudioGenerator is attached, this has no effect. If an AecDump is
-  // attached, its destructor is called.
-  virtual void DetachPlayoutAudioGenerator() = 0;
 
   // Get audio processing statistics.
   virtual AudioProcessingStats GetStatistics() = 0;

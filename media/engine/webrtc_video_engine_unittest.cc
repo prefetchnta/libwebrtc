@@ -1082,9 +1082,10 @@ TEST(WebRtcVideoEngineNewVideoCodecFactoryTest, Vp8) {
       rate_allocator_factory =
           std::make_unique<webrtc::MockVideoBitrateAllocatorFactory>();
   EXPECT_CALL(*rate_allocator_factory,
-              CreateVideoBitrateAllocatorProxy(Field(
-                  &webrtc::VideoCodec::codecType, webrtc::kVideoCodecVP8)))
-      .WillOnce(Return(new webrtc::MockVideoBitrateAllocator()));
+              CreateVideoBitrateAllocator(Field(&webrtc::VideoCodec::codecType,
+                                                webrtc::kVideoCodecVP8)))
+      .WillOnce(
+          [] { return std::make_unique<webrtc::MockVideoBitrateAllocator>(); });
   WebRtcVideoEngine engine(
       (std::unique_ptr<webrtc::VideoEncoderFactory>(encoder_factory)),
       (std::unique_ptr<webrtc::VideoDecoderFactory>(decoder_factory)));
@@ -1134,18 +1135,16 @@ TEST(WebRtcVideoEngineNewVideoCodecFactoryTest, Vp8) {
   const webrtc::SdpVideoFormat format("VP8");
   EXPECT_CALL(*encoder_factory, QueryVideoEncoder(format))
       .WillRepeatedly(Return(codec_info));
-  FakeWebRtcVideoEncoder* const encoder = new FakeWebRtcVideoEncoder(nullptr);
   rtc::Event encoder_created;
-  EXPECT_CALL(*encoder_factory, CreateVideoEncoderProxy(format))
-      .WillOnce(
-          ::testing::DoAll(::testing::InvokeWithoutArgs(
-                               [&encoder_created]() { encoder_created.Set(); }),
-                           Return(encoder)));
+  EXPECT_CALL(*encoder_factory, CreateVideoEncoder(format)).WillOnce([&] {
+    encoder_created.Set();
+    return std::make_unique<FakeWebRtcVideoEncoder>(nullptr);
+  });
 
   // Mock decoder creation. |engine| take ownership of the decoder.
-  FakeWebRtcVideoDecoder* const decoder = new FakeWebRtcVideoDecoder(nullptr);
-  EXPECT_CALL(*decoder_factory, CreateVideoDecoderProxy(format))
-      .WillOnce(Return(decoder));
+  EXPECT_CALL(*decoder_factory, CreateVideoDecoder(format)).WillOnce([] {
+    return std::make_unique<FakeWebRtcVideoDecoder>(nullptr);
+  });
 
   // Create a call.
   webrtc::RtcEventLogNull event_log;
@@ -1216,8 +1215,9 @@ TEST(WebRtcVideoEngineNewVideoCodecFactoryTest, NullDecoder) {
       .WillRepeatedly(Return(supported_formats));
 
   // Decoder creation fails.
-  EXPECT_CALL(*decoder_factory, CreateVideoDecoderProxy(_))
-      .WillOnce(Return(nullptr));
+  EXPECT_CALL(*decoder_factory, CreateVideoDecoder).WillOnce([] {
+    return nullptr;
+  });
 
   // Create a call.
   webrtc::RtcEventLogNull event_log;

@@ -11,8 +11,11 @@
 #ifndef MODULES_AUDIO_PROCESSING_AUDIO_PROCESSING_IMPL_H_
 #define MODULES_AUDIO_PROCESSING_AUDIO_PROCESSING_IMPL_H_
 
+#include <stdio.h>
+
 #include <list>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "api/function_view.h"
@@ -70,12 +73,15 @@ class AudioProcessingImpl : public AudioProcessing {
   int Initialize(const ProcessingConfig& processing_config) override;
   void ApplyConfig(const AudioProcessing::Config& config) override;
   void SetExtraOptions(const webrtc::Config& config) override;
+  bool CreateAndAttachAecDump(const std::string& file_name,
+                              int64_t max_log_size_bytes,
+                              rtc::TaskQueue* worker_queue) override;
+  bool CreateAndAttachAecDump(FILE* handle,
+                              int64_t max_log_size_bytes,
+                              rtc::TaskQueue* worker_queue) override;
+  // TODO(webrtc:5298) Deprecated variant.
   void AttachAecDump(std::unique_ptr<AecDump> aec_dump) override;
   void DetachAecDump() override;
-  void AttachPlayoutAudioGenerator(
-      std::unique_ptr<AudioGenerator> audio_generator) override;
-  void DetachPlayoutAudioGenerator() override;
-
   void SetRuntimeSetting(RuntimeSetting setting) override;
 
   // Capture-side exclusive methods possibly running APM in a
@@ -94,7 +100,8 @@ class AudioProcessingImpl : public AudioProcessing {
   int set_stream_delay_ms(int delay) override;
   void set_stream_key_pressed(bool key_pressed) override;
   void set_stream_analog_level(int level) override;
-  int recommended_stream_analog_level() const override;
+  int recommended_stream_analog_level() const
+      RTC_LOCKS_EXCLUDED(crit_capture_) override;
 
   // Render-side exclusive methods possibly running APM in a
   // multi-threaded manner. Acquire the render lock.
@@ -148,6 +155,9 @@ class AudioProcessingImpl : public AudioProcessing {
                            ReinitializeTransientSuppressor);
   FRIEND_TEST_ALL_PREFIXES(ApmWithSubmodulesExcludedTest,
                            BitexactWithDisabledModules);
+
+  int recommended_stream_analog_level_locked() const
+      RTC_EXCLUSIVE_LOCKS_REQUIRED(crit_capture_);
 
   void OverrideSubmoduleCreationForTesting(
       const ApmSubmoduleCreationOverrides& overrides);
@@ -275,7 +285,9 @@ class AudioProcessingImpl : public AudioProcessing {
       RTC_EXCLUSIVE_LOCKS_REQUIRED(crit_capture_);
   void HandleRenderRuntimeSettings() RTC_EXCLUSIVE_LOCKS_REQUIRED(crit_render_);
 
-  void EmptyQueuedRenderAudio();
+  void EmptyQueuedRenderAudio() RTC_LOCKS_EXCLUDED(crit_capture_);
+  void EmptyQueuedRenderAudioLocked()
+      RTC_EXCLUSIVE_LOCKS_REQUIRED(crit_capture_);
   void AllocateRenderQueue()
       RTC_EXCLUSIVE_LOCKS_REQUIRED(crit_render_, crit_capture_);
   void QueueBandedRenderAudio(AudioBuffer* audio)

@@ -38,12 +38,12 @@
 #include "rtc_base/rate_statistics.h"
 #include "rtc_base/synchronization/sequence_checker.h"
 #include "rtc_base/task_queue.h"
+#include "rtc_base/thread_checker.h"
 #include "system_wrappers/include/clock.h"
 #include "video/adaptation/video_stream_encoder_resource_manager.h"
 #include "video/encoder_bitrate_adjuster.h"
 #include "video/frame_encode_metadata_writer.h"
 #include "video/video_source_sink_controller.h"
-
 namespace webrtc {
 
 // VideoStreamEncoder represent a video encoder that accepts raw video frames as
@@ -106,19 +106,28 @@ class VideoStreamEncoder : public VideoStreamEncoderInterface,
   // Used for testing. For example the |ScalingObserverInterface| methods must
   // be called on |encoder_queue_|.
   rtc::TaskQueue* encoder_queue() { return &encoder_queue_; }
+  rtc::TaskQueue* resource_adaptation_queue() {
+    return &resource_adaptation_queue_;
+  }
 
   void OnVideoSourceRestrictionsUpdated(
       VideoSourceRestrictions restrictions,
       const VideoAdaptationCounters& adaptation_counters,
-      const Resource* reason) override;
+      rtc::scoped_refptr<Resource> reason) override;
 
   // Used for injected test resources.
   // TODO(eshr): Move all adaptation tests out of VideoStreamEncoder tests.
-  void InjectAdaptationResource(Resource* resource,
+  void InjectAdaptationResource(rtc::scoped_refptr<Resource> resource,
                                 VideoAdaptationReason reason)
       RTC_RUN_ON(&encoder_queue_);
 
-  QualityScalerResource* quality_scaler_resource_for_testing();
+  rtc::scoped_refptr<QualityScalerResource>
+  quality_scaler_resource_for_testing();
+
+  void AddAdaptationListenerForTesting(
+      ResourceAdaptationProcessorListener* adaptation_listener);
+  void RemoveAdaptationListenerForTesting(
+      ResourceAdaptationProcessorListener* adaptation_listener);
 
  private:
   class VideoFrameInfo {
@@ -400,31 +409,34 @@ class VideoStreamEncoder : public VideoStreamEncoderInterface,
   bool encoder_switch_requested_ RTC_GUARDED_BY(&encoder_queue_);
 
   // Provies video stream input states: current resolution and frame rate.
-  VideoStreamInputStateProvider input_state_provider_
-      RTC_GUARDED_BY(&encoder_queue_);
+  // This class is thread-safe.
+  VideoStreamInputStateProvider input_state_provider_;
   // Responsible for adapting input resolution or frame rate to ensure resources
   // (e.g. CPU or bandwidth) are not overused.
+  // This class is single-threaded on the resource adaptation queue.
   std::unique_ptr<ResourceAdaptationProcessorInterface>
-      resource_adaptation_processor_ RTC_GUARDED_BY(&encoder_queue_);
+      resource_adaptation_processor_
+          RTC_GUARDED_BY(&resource_adaptation_queue_);
   // Handles input, output and stats reporting related to VideoStreamEncoder
   // specific resources, such as "encode usage percent" measurements and "QP
   // scaling". Also involved with various mitigations such as inital frame
   // dropping.
-  VideoStreamEncoderResourceManager stream_resource_manager_
-      RTC_GUARDED_BY(&encoder_queue_);
+  // The manager primarily operates on the |encoder_queue_| but its lifetime is
+  // tied to the VideoStreamEncoder (which is destroyed off the encoder queue)
+  // and its resource list is accessible from any thread.
+  VideoStreamEncoderResourceManager stream_resource_manager_;
   // Carries out the VideoSourceRestrictions provided by the
   // ResourceAdaptationProcessor, i.e. reconfigures the source of video frames
   // to provide us with different resolution or frame rate.
-  //
-  // Used on the |encoder_queue_| with a few exceptions:
-  // - VideoStreamEncoder::SetSource() invokes SetSource().
-  // - VideoStreamEncoder::SetSink() invokes SetRotationApplied() and
-  //   PushSourceSinkSettings().
-  // - VideoStreamEncoder::Stop() invokes SetSource().
+  // This class is thread-safe.
   VideoSourceSinkController video_source_sink_controller_;
 
-  // All public methods are proxied to |encoder_queue_|. It must must be
-  // destroyed first to make sure no tasks are run that use other members.
+  // Public methods are proxied to the task queues. The queues must be destroyed
+  // first to make sure no tasks run that use other members.
+  // TODO(https://crbug.com/webrtc/11172): Move ownership of the
+  // ResourceAdaptationProcessor and its task queue to Call when processors are
+  // multi-stream aware.
+  rtc::TaskQueue resource_adaptation_queue_;
   rtc::TaskQueue encoder_queue_;
 
   RTC_DISALLOW_COPY_AND_ASSIGN(VideoStreamEncoder);
