@@ -42,6 +42,7 @@ class Clock;
 struct PacedPacketInfo;
 struct RTPVideoHeader;
 
+// DEPRECATED.
 class ModuleRtpRtcpImpl : public RtpRtcp, public RTCPReceiver::ModuleRtpRtcp {
  public:
   explicit ModuleRtpRtcpImpl(const RtpRtcp::Configuration& configuration);
@@ -256,8 +257,6 @@ class ModuleRtpRtcpImpl : public RtpRtcp, public RTCPReceiver::ModuleRtpRtcp {
   bool LastReceivedNTP(uint32_t* NTPsecs,
                        uint32_t* NTPfrac,
                        uint32_t* remote_sr) const;
-
-  std::vector<rtcp::TmmbItem> BoundingSet(bool* tmmbr_owner);
 
   void BitrateSent(uint32_t* total_rate,
                    uint32_t* video_rate,
