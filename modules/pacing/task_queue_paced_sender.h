@@ -38,9 +38,7 @@ namespace webrtc {
 class Clock;
 class RtcEventLog;
 
-class TaskQueuePacedSender : public RtpPacketPacer,
-                             public RtpPacketSender,
-                             private PacingController::PacketSender {
+class TaskQueuePacedSender : public RtpPacketPacer, public RtpPacketSender {
  public:
   // The |hold_back_window| parameter sets a lower bound on time to sleep if
   // there is currently a pacer queue and packets can't immediately be
@@ -106,7 +104,8 @@ class TaskQueuePacedSender : public RtpPacketPacer,
   // specified by SetPacingRates() if needed to achieve this goal.
   void SetQueueTimeLimit(TimeDelta limit) override;
 
- private:
+ protected:
+  // Exposed as protected for test.
   struct Stats {
     Stats()
         : oldest_packet_wait_time(TimeDelta::Zero()),
@@ -117,7 +116,9 @@ class TaskQueuePacedSender : public RtpPacketPacer,
     TimeDelta expected_queue_time;
     absl::optional<Timestamp> first_sent_packet_time;
   };
+  virtual void OnStatsUpdated(const Stats& stats);
 
+ private:
   // Check if it is time to send packets, or schedule a delayed task if not.
   // Use Timestamp::MinusInfinity() to indicate that this call has _not_
   // been scheduled by the pacing controller. If this is the case, check if
@@ -125,21 +126,11 @@ class TaskQueuePacedSender : public RtpPacketPacer,
   // method again with desired (finite) scheduled process time.
   void MaybeProcessPackets(Timestamp scheduled_process_time);
 
-  // Methods implementing PacedSenderController:PacketSender.
-
-  void SendRtpPacket(std::unique_ptr<RtpPacketToSend> packet,
-                     const PacedPacketInfo& cluster_info) override
-      RTC_RUN_ON(task_queue_);
-
-  std::vector<std::unique_ptr<RtpPacketToSend>> GeneratePadding(
-      DataSize size) override RTC_RUN_ON(task_queue_);
-
   void MaybeUpdateStats(bool is_scheduled_call) RTC_RUN_ON(task_queue_);
   Stats GetStats() const;
 
   Clock* const clock_;
   const TimeDelta hold_back_window_;
-  PacketRouter* const packet_router_ RTC_GUARDED_BY(task_queue_);
   PacingController pacing_controller_ RTC_GUARDED_BY(task_queue_);
 
   // We want only one (valid) delayed process task in flight at a time.

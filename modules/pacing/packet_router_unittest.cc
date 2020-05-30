@@ -68,7 +68,7 @@ class PacketRouterTest : public ::testing::Test {
 };
 
 TEST_F(PacketRouterTest, Sanity_NoModuleRegistered_GeneratePadding) {
-  constexpr size_t bytes = 300;
+  constexpr DataSize bytes = DataSize::Bytes(300);
   const PacedPacketInfo paced_info(1, kProbeMinProbes, kProbeMinBytes);
 
   EXPECT_TRUE(packet_router_.GeneratePadding(bytes).empty());
@@ -122,7 +122,8 @@ TEST_F(PacketRouterTest, GeneratePaddingPrioritizesRtx) {
         return std::vector<std::unique_ptr<RtpPacketToSend>>(
             kExpectedPaddingPackets);
       });
-  auto generated_padding = packet_router_.GeneratePadding(kPaddingSize);
+  auto generated_padding =
+      packet_router_.GeneratePadding(DataSize::Bytes(kPaddingSize));
   EXPECT_EQ(generated_padding.size(), kExpectedPaddingPackets);
 
   packet_router_.RemoveSendRtpModule(&rtp_1);
@@ -159,7 +160,7 @@ TEST_F(PacketRouterTest, GeneratePaddingPrioritizesVideo) {
   packet_router_.AddSendRtpModule(&audio_module, false);
   EXPECT_CALL(audio_module, GeneratePadding(kPaddingSize))
       .WillOnce(generate_padding);
-  packet_router_.GeneratePadding(kPaddingSize);
+  packet_router_.GeneratePadding(DataSize::Bytes(kPaddingSize));
 
   // Add the video module, this should now be prioritized since we cannot
   // guarantee that audio packets will be included in the BWE.
@@ -167,7 +168,7 @@ TEST_F(PacketRouterTest, GeneratePaddingPrioritizesVideo) {
   EXPECT_CALL(audio_module, GeneratePadding).Times(0);
   EXPECT_CALL(video_module, GeneratePadding(kPaddingSize))
       .WillOnce(generate_padding);
-  packet_router_.GeneratePadding(kPaddingSize);
+  packet_router_.GeneratePadding(DataSize::Bytes(kPaddingSize));
 
   // Remove and the add audio module again. Module order shouldn't matter;
   // video should still be prioritized.
@@ -176,14 +177,14 @@ TEST_F(PacketRouterTest, GeneratePaddingPrioritizesVideo) {
   EXPECT_CALL(audio_module, GeneratePadding).Times(0);
   EXPECT_CALL(video_module, GeneratePadding(kPaddingSize))
       .WillOnce(generate_padding);
-  packet_router_.GeneratePadding(kPaddingSize);
+  packet_router_.GeneratePadding(DataSize::Bytes(kPaddingSize));
 
   // Remove and the video module, we should fall back to padding on the
   // audio module again.
   packet_router_.RemoveSendRtpModule(&video_module);
   EXPECT_CALL(audio_module, GeneratePadding(kPaddingSize))
       .WillOnce(generate_padding);
-  packet_router_.GeneratePadding(kPaddingSize);
+  packet_router_.GeneratePadding(DataSize::Bytes(kPaddingSize));
 
   packet_router_.RemoveSendRtpModule(&audio_module);
 }
@@ -243,7 +244,7 @@ TEST_F(PacketRouterTest, PadsOnLastActiveMediaStream) {
         packets.push_back(BuildRtpPacket(kSsrc2));
         return packets;
       });
-  packet_router_.GeneratePadding(kPaddingBytes);
+  packet_router_.GeneratePadding(DataSize::Bytes(kPaddingBytes));
 
   // Send media on first module. Padding should be sent on that module.
   packet_router_.SendPacket(BuildRtpPacket(kSsrc1), PacedPacketInfo());
@@ -255,7 +256,7 @@ TEST_F(PacketRouterTest, PadsOnLastActiveMediaStream) {
         packets.push_back(BuildRtpPacket(kSsrc1));
         return packets;
       });
-  packet_router_.GeneratePadding(kPaddingBytes);
+  packet_router_.GeneratePadding(DataSize::Bytes(kPaddingBytes));
 
   // Send media on second module. Padding should be sent there.
   packet_router_.SendPacket(BuildRtpPacket(kSsrc2), PacedPacketInfo());
@@ -285,7 +286,7 @@ TEST_F(PacketRouterTest, PadsOnLastActiveMediaStream) {
 
   for (int i = 0; i < 2; ++i) {
     last_send_module = nullptr;
-    packet_router_.GeneratePadding(kPaddingBytes);
+    packet_router_.GeneratePadding(DataSize::Bytes(kPaddingBytes));
     EXPECT_NE(last_send_module, nullptr);
     packet_router_.RemoveSendRtpModule(last_send_module);
   }
@@ -405,7 +406,8 @@ TEST_F(PacketRouterTest, SendPacketAssignsTransportSequenceNumbers) {
 }
 
 #if RTC_DCHECK_IS_ON && GTEST_HAS_DEATH_TEST && !defined(WEBRTC_ANDROID)
-TEST_F(PacketRouterTest, DoubleRegistrationOfSendModuleDisallowed) {
+using PacketRouterDeathTest = PacketRouterTest;
+TEST_F(PacketRouterDeathTest, DoubleRegistrationOfSendModuleDisallowed) {
   NiceMock<MockRtpRtcp> module;
 
   constexpr bool remb_candidate = false;  // Value irrelevant.
@@ -416,7 +418,7 @@ TEST_F(PacketRouterTest, DoubleRegistrationOfSendModuleDisallowed) {
   packet_router_.RemoveSendRtpModule(&module);
 }
 
-TEST_F(PacketRouterTest, DoubleRegistrationOfReceiveModuleDisallowed) {
+TEST_F(PacketRouterDeathTest, DoubleRegistrationOfReceiveModuleDisallowed) {
   NiceMock<MockRtpRtcp> module;
 
   constexpr bool remb_candidate = false;  // Value irrelevant.
@@ -427,13 +429,13 @@ TEST_F(PacketRouterTest, DoubleRegistrationOfReceiveModuleDisallowed) {
   packet_router_.RemoveReceiveRtpModule(&module);
 }
 
-TEST_F(PacketRouterTest, RemovalOfNeverAddedSendModuleDisallowed) {
+TEST_F(PacketRouterDeathTest, RemovalOfNeverAddedSendModuleDisallowed) {
   NiceMock<MockRtpRtcp> module;
 
   EXPECT_DEATH(packet_router_.RemoveSendRtpModule(&module), "");
 }
 
-TEST_F(PacketRouterTest, RemovalOfNeverAddedReceiveModuleDisallowed) {
+TEST_F(PacketRouterDeathTest, RemovalOfNeverAddedReceiveModuleDisallowed) {
   NiceMock<MockRtpRtcp> module;
 
   EXPECT_DEATH(packet_router_.RemoveReceiveRtpModule(&module), "");

@@ -403,7 +403,9 @@ void PacingController::ProcessPackets() {
     if (target_send_time.IsMinusInfinity()) {
       target_send_time = now;
     } else if (now < target_send_time) {
-      // We are too early, abort and regroup!
+      // We are too early, but if queue is empty still allow draining some debt.
+      TimeDelta elapsed_time = UpdateTimeAndGetElapsed(now);
+      UpdateBudgetWithElapsedTime(elapsed_time);
       return;
     }
 
@@ -438,7 +440,7 @@ void PacingController::ProcessPackets() {
       for (auto& packet : keepalive_packets) {
         keepalive_data_sent +=
             DataSize::Bytes(packet->payload_size() + packet->padding_size());
-        packet_sender_->SendRtpPacket(std::move(packet), PacedPacketInfo());
+        packet_sender_->SendPacket(std::move(packet), PacedPacketInfo());
       }
       OnPaddingSent(keepalive_data_sent);
     }
@@ -557,7 +559,7 @@ void PacingController::ProcessPackets() {
       packet_size += DataSize::Bytes(rtp_packet->headers_size()) +
                      transport_overhead_per_packet_;
     }
-    packet_sender_->SendRtpPacket(std::move(rtp_packet), pacing_info);
+    packet_sender_->SendPacket(std::move(rtp_packet), pacing_info);
 
     data_sent += packet_size;
 
