@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "api/array_view.h"
 #include "api/test/video_quality_analyzer_interface.h"
 #include "api/units/timestamp.h"
 #include "api/video/encoded_image.h"
@@ -134,21 +135,34 @@ class DefaultVideoQualityAnalyzer : public VideoQualityAnalyzerInterface {
           kDefaultMaxFramesInFlightPerStream);
   ~DefaultVideoQualityAnalyzer() override;
 
-  void Start(std::string test_case_name, int max_threads_count) override;
-  uint16_t OnFrameCaptured(const std::string& stream_label,
+  void Start(std::string test_case_name,
+             rtc::ArrayView<const std::string> peer_names,
+             int max_threads_count) override;
+  uint16_t OnFrameCaptured(absl::string_view peer_name,
+                           const std::string& stream_label,
                            const VideoFrame& frame) override;
-  void OnFramePreEncode(const VideoFrame& frame) override;
-  void OnFrameEncoded(uint16_t frame_id,
+  void OnFramePreEncode(absl::string_view peer_name,
+                        const VideoFrame& frame) override;
+  void OnFrameEncoded(absl::string_view peer_name,
+                      uint16_t frame_id,
                       const EncodedImage& encoded_image,
                       const EncoderStats& stats) override;
-  void OnFrameDropped(EncodedImageCallback::DropReason reason) override;
-  void OnFramePreDecode(uint16_t frame_id,
+  void OnFrameDropped(absl::string_view peer_name,
+                      EncodedImageCallback::DropReason reason) override;
+  void OnFramePreDecode(absl::string_view peer_name,
+                        uint16_t frame_id,
                         const EncodedImage& input_image) override;
-  void OnFrameDecoded(const VideoFrame& frame,
+  void OnFrameDecoded(absl::string_view peer_name,
+                      const VideoFrame& frame,
                       const DecoderStats& stats) override;
-  void OnFrameRendered(const VideoFrame& frame) override;
-  void OnEncoderError(const VideoFrame& frame, int32_t error_code) override;
-  void OnDecoderError(uint16_t frame_id, int32_t error_code) override;
+  void OnFrameRendered(absl::string_view peer_name,
+                       const VideoFrame& frame) override;
+  void OnEncoderError(absl::string_view peer_name,
+                      const VideoFrame& frame,
+                      int32_t error_code) override;
+  void OnDecoderError(absl::string_view peer_name,
+                      uint16_t frame_id,
+                      int32_t error_code) override;
   void Stop() override;
   std::string GetStreamLabel(uint16_t frame_id) override;
   void OnStatsReports(const std::string& pc_label,

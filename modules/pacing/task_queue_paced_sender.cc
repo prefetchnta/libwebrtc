@@ -122,6 +122,7 @@ void TaskQueuePacedSender::SetPacingRates(DataRate pacing_rate,
 
 void TaskQueuePacedSender::EnqueuePackets(
     std::vector<std::unique_ptr<RtpPacketToSend>> packets) {
+#if RTC_TRACE_EVENTS_ENABLED
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("webrtc"),
                "TaskQueuePacedSender::EnqueuePackets");
   for (auto& packet : packets) {
@@ -130,6 +131,7 @@ void TaskQueuePacedSender::EnqueuePackets(
                  "sequence_number", packet->SequenceNumber(), "rtp_timestamp",
                  packet->Timestamp());
   }
+#endif
 
   task_queue_.PostTask([this, packets_ = std::move(packets)]() mutable {
     RTC_DCHECK_RUN_ON(&task_queue_);

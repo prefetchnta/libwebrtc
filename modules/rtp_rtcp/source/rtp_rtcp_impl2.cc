@@ -39,7 +39,7 @@ const int64_t kDefaultExpectedRetransmissionTimeMs = 125;
 }  // namespace
 
 ModuleRtpRtcpImpl2::RtpSenderContext::RtpSenderContext(
-    const RtpRtcp::Configuration& config)
+    const RtpRtcpInterface::Configuration& config)
     : packet_history(config.clock, config.enable_rtx_padding_prioritization),
       packet_sender(config, &packet_history),
       non_paced_sender(&packet_sender),
@@ -47,11 +47,6 @@ ModuleRtpRtcpImpl2::RtpSenderContext::RtpSenderContext(
           config,
           &packet_history,
           config.paced_sender ? config.paced_sender : &non_paced_sender) {}
-
-std::unique_ptr<RtpRtcp> RtpRtcp::Create(const Configuration& configuration) {
-  RTC_DCHECK(configuration.clock);
-  return std::make_unique<ModuleRtpRtcpImpl2>(configuration);
-}
 
 ModuleRtpRtcpImpl2::ModuleRtpRtcpImpl2(const Configuration& configuration)
     : rtcp_sender_(configuration),
@@ -84,6 +79,14 @@ ModuleRtpRtcpImpl2::ModuleRtpRtcpImpl2(const Configuration& configuration)
 
 ModuleRtpRtcpImpl2::~ModuleRtpRtcpImpl2() {
   RTC_DCHECK_RUN_ON(&construction_thread_checker_);
+}
+
+// static
+std::unique_ptr<ModuleRtpRtcpImpl2> ModuleRtpRtcpImpl2::Create(
+    const Configuration& configuration) {
+  RTC_DCHECK(configuration.clock);
+  RTC_DCHECK(TaskQueueBase::Current());
+  return std::make_unique<ModuleRtpRtcpImpl2>(configuration);
 }
 
 // Returns the number of milliseconds until the module want a worker thread
@@ -590,12 +593,6 @@ void ModuleRtpRtcpImpl2::UnsetRemb() {
 
 void ModuleRtpRtcpImpl2::SetExtmapAllowMixed(bool extmap_allow_mixed) {
   rtp_sender_->packet_generator.SetExtmapAllowMixed(extmap_allow_mixed);
-}
-
-int32_t ModuleRtpRtcpImpl2::RegisterSendRtpHeaderExtension(
-    const RTPExtensionType type,
-    const uint8_t id) {
-  return rtp_sender_->packet_generator.RegisterRtpHeaderExtension(type, id);
 }
 
 void ModuleRtpRtcpImpl2::RegisterRtpHeaderExtension(absl::string_view uri,

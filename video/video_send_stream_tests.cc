@@ -25,10 +25,10 @@
 #include "call/simulated_network.h"
 #include "call/video_send_stream.h"
 #include "modules/rtp_rtcp/include/rtp_header_extension_map.h"
-#include "modules/rtp_rtcp/include/rtp_rtcp.h"
 #include "modules/rtp_rtcp/source/rtcp_sender.h"
 #include "modules/rtp_rtcp/source/rtp_header_extensions.h"
 #include "modules/rtp_rtcp/source/rtp_packet.h"
+#include "modules/rtp_rtcp/source/rtp_rtcp_impl2.h"
 #include "modules/rtp_rtcp/source/video_rtp_depacketizer_vp9.h"
 #include "modules/video_coding/codecs/vp8/include/vp8.h"
 #include "modules/video_coding/codecs/vp9/include/vp9.h"
@@ -948,7 +948,7 @@ void VideoSendStreamTest::TestNackRetransmission(
             non_padding_sequence_numbers_.end() - kNackedPacketsAtOnceCount,
             non_padding_sequence_numbers_.end());
 
-        RtpRtcp::Configuration config;
+        RtpRtcpInterface::Configuration config;
         config.clock = Clock::GetRealTimeClock();
         config.outgoing_transport = transport_adapter_.get();
         config.rtcp_report_interval_ms = kRtcpIntervalMs;
@@ -1164,7 +1164,7 @@ void VideoSendStreamTest::TestPacketFragmentationSize(VideoFormat format,
             kVideoSendSsrcs[0], rtp_packet.SequenceNumber(),
             packets_lost_,  // Cumulative lost.
             loss_ratio);    // Loss percent.
-        RtpRtcp::Configuration config;
+        RtpRtcpInterface::Configuration config;
         config.clock = Clock::GetRealTimeClock();
         config.receive_statistics = &lossy_receive_stats;
         config.outgoing_transport = transport_adapter_.get();
@@ -1416,7 +1416,7 @@ TEST_F(VideoSendStreamTest, SuspendBelowMinBitrate) {
         RTC_EXCLUSIVE_LOCKS_REQUIRED(crit_) {
       FakeReceiveStatistics receive_stats(kVideoSendSsrcs[0],
                                           last_sequence_number_, rtp_count_, 0);
-      RtpRtcp::Configuration config;
+      RtpRtcpInterface::Configuration config;
       config.clock = clock_;
       config.receive_statistics = &receive_stats;
       config.outgoing_transport = transport_adapter_.get();
@@ -1673,11 +1673,11 @@ TEST_F(VideoSendStreamTest, MinTransmitBitrateRespectsRemb) {
         VideoSendStream* send_stream,
         const std::vector<VideoReceiveStream*>& receive_streams) override {
       stream_ = send_stream;
-      RtpRtcp::Configuration config;
+      RtpRtcpInterface::Configuration config;
       config.clock = Clock::GetRealTimeClock();
       config.outgoing_transport = feedback_transport_.get();
       config.retransmission_rate_limiter = &retranmission_rate_limiter_;
-      rtp_rtcp_ = RtpRtcp::Create(config);
+      rtp_rtcp_ = ModuleRtpRtcpImpl2::Create(config);
       rtp_rtcp_->SetRTCPStatus(RtcpMode::kReducedSize);
     }
 
@@ -1697,7 +1697,7 @@ TEST_F(VideoSendStreamTest, MinTransmitBitrateRespectsRemb) {
     }
 
     TaskQueueBase* const task_queue_;
-    std::unique_ptr<RtpRtcp> rtp_rtcp_;
+    std::unique_ptr<ModuleRtpRtcpImpl2> rtp_rtcp_;
     std::unique_ptr<internal::TransportAdapter> feedback_transport_;
     RateLimiter retranmission_rate_limiter_;
     VideoSendStream* stream_;

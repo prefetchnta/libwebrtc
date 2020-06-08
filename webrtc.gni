@@ -155,6 +155,9 @@ declare_args() {
   rtc_use_h264 =
       proprietary_codecs && !is_android && !is_ios && !(is_win && !is_clang)
 
+  # Enable this flag to make webrtc::Mutex be implemented by absl::Mutex.
+  rtc_use_absl_mutex = false
+
   # By default, use normal platform audio support or dummy audio, but don't
   # use file-based audio playout and record.
   rtc_use_dummy_audio_file_devices = false
@@ -323,16 +326,19 @@ set_defaults("rtc_test") {
 set_defaults("rtc_library") {
   configs = rtc_add_configs
   suppressed_configs = []
+  absl_deps = []
 }
 
 set_defaults("rtc_source_set") {
   configs = rtc_add_configs
   suppressed_configs = []
+  absl_deps = []
 }
 
 set_defaults("rtc_static_library") {
   configs = rtc_add_configs
   suppressed_configs = []
+  absl_deps = []
 }
 
 set_defaults("rtc_executable") {
@@ -525,6 +531,20 @@ template("rtc_source_set") {
     if (defined(invoker.public_configs)) {
       public_configs += invoker.public_configs
     }
+
+    # If absl_deps if [], no action is needed. If not [], then if needs to be
+    # converted to //third_party/abseil-cpp:absl if is_component_build=true
+    # otherwise it just needs to be added to deps.
+    if (absl_deps != []) {
+      if (is_component_build && build_with_chromium) {
+        # TODO(crbug.com/1046390): Enable when the Abseil component will be
+        # available.
+        # deps += [ "//third_party/abseil-cpp:absl" ]
+        deps += absl_deps  # Remove when the line above is enabled.
+      } else {
+        deps += absl_deps
+      }
+    }
   }
 }
 
@@ -599,6 +619,20 @@ template("rtc_static_library") {
     }
     if (defined(invoker.public_configs)) {
       public_configs += invoker.public_configs
+    }
+
+    # If absl_deps if [], no action is needed. If not [], then if needs to be
+    # converted to //third_party/abseil-cpp:absl if is_component_build=true
+    # otherwise it just needs to be added to deps.
+    if (absl_deps != []) {
+      if (is_component_build && build_with_chromium) {
+        # TODO(crbug.com/1046390): Enable when the Abseil component will be
+        # available.
+        # deps += [ "//third_party/abseil-cpp:absl" ]
+        deps += absl_deps  # Remove when the line above is enabled.
+      } else {
+        deps += absl_deps
+      }
     }
   }
 }
@@ -711,6 +745,20 @@ template("rtc_library") {
     }
     if (defined(invoker.public_configs)) {
       public_configs += invoker.public_configs
+    }
+
+    # If absl_deps if [], no action is needed. If not [], then if needs to be
+    # converted to //third_party/abseil-cpp:absl if is_component_build=true
+    # otherwise it just needs to be added to deps.
+    if (absl_deps != []) {
+      if (is_component_build && build_with_chromium) {
+        # TODO(crbug.com/1046390): Enable when the Abseil component will be
+        # available.
+        # deps += [ "//third_party/abseil-cpp:absl" ]
+        deps += absl_deps  # Remove when the line above is enabled.
+      } else {
+        deps += absl_deps
+      }
     }
   }
 }
@@ -1002,7 +1050,7 @@ if (is_android) {
       }
 
       no_build_hooks = true
-      not_needed(["android_manifest"])
+      not_needed([ "android_manifest" ])
     }
   }
 

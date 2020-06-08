@@ -71,8 +71,8 @@ rtc_library("rtp_headers") {
     "..:webrtc_common",
     "units:timestamp",
     "video:video_rtp_headers",
-    "//third_party/abseil-cpp/absl/types:optional",
   ]
+  absl_deps = [ "//third_party/abseil-cpp/absl/types:optional" ]
 }
 
 rtc_library("rtp_packet_info") {
@@ -285,11 +285,13 @@ rtc_source_set("video_quality_analyzer_api") {
   sources = [ "test/video_quality_analyzer_interface.h" ]
 
   deps = [
+    ":array_view",
     ":stats_observer_interface",
     "video:encoded_image",
     "video:video_frame",
     "video:video_rtp_headers",
     "video_codecs:video_codecs_api",
+    "//third_party/abseil-cpp/absl/strings",
     "//third_party/abseil-cpp/absl/types:optional",
   ]
 }
@@ -860,8 +862,20 @@ if (rtc_include_tests) {
   }
 
   rtc_source_set("mock_peerconnectioninterface") {
+    visibility = [ "*" ]
     testonly = true
     sources = [ "test/mock_peerconnectioninterface.h" ]
+
+    deps = [
+      ":libjingle_peerconnection_api",
+      "../test:test_support",
+    ]
+  }
+
+  rtc_source_set("mock_peer_connection_factory_interface") {
+    visibility = [ "*" ]
+    testonly = true
+    sources = [ "test/mock_peer_connection_factory_interface.h" ]
 
     deps = [
       ":libjingle_peerconnection_api",
@@ -1056,6 +1070,7 @@ if (rtc_include_tests) {
       ":mock_audio_mixer",
       ":mock_frame_decryptor",
       ":mock_frame_encryptor",
+      ":mock_peer_connection_factory_interface",
       ":mock_peerconnectioninterface",
       ":mock_rtp",
       ":mock_transformable_video_frame",

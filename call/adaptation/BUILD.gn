@@ -10,10 +10,12 @@ import("../../webrtc.gni")
 
 rtc_library("resource_adaptation") {
   sources = [
+    "adaptation_constraint.cc",
+    "adaptation_constraint.h",
+    "adaptation_listener.cc",
+    "adaptation_listener.h",
     "encoder_settings.cc",
     "encoder_settings.h",
-    "resource.cc",
-    "resource.h",
     "resource_adaptation_processor.cc",
     "resource_adaptation_processor.h",
     "resource_adaptation_processor_interface.cc",
@@ -30,6 +32,8 @@ rtc_library("resource_adaptation") {
   deps = [
     "../../api:rtp_parameters",
     "../../api:scoped_refptr",
+    "../../api/adaptation:resource_adaptation_api",
+    "../../api/task_queue:task_queue",
     "../../api/video:video_adaptation",
     "../../api/video:video_frame",
     "../../api/video:video_stream_encoder",
@@ -40,6 +44,7 @@ rtc_library("resource_adaptation") {
     "../../rtc_base:rtc_task_queue",
     "../../rtc_base/experiments:balanced_degradation_settings",
     "../../rtc_base/synchronization:sequence_checker",
+    "../../rtc_base/task_utils:to_queued_task",
     "//third_party/abseil-cpp/absl/algorithm:container",
     "//third_party/abseil-cpp/absl/types:optional",
   ]
@@ -60,11 +65,13 @@ if (rtc_include_tests) {
       ":resource_adaptation",
       ":resource_adaptation_test_utilities",
       "../../api:scoped_refptr",
+      "../../api/adaptation:resource_adaptation_api",
       "../../api/task_queue:default_task_queue_factory",
       "../../api/task_queue:task_queue",
       "../../api/video:video_adaptation",
       "../../api/video_codecs:video_codecs_api",
       "../../rtc_base:checks",
+      "../../rtc_base:gunit_helpers",
       "../../rtc_base:rtc_base_approved",
       "../../rtc_base:rtc_task_queue",
       "../../rtc_base:task_queue_for_test",
@@ -79,6 +86,10 @@ if (rtc_include_tests) {
     testonly = true
 
     sources = [
+      "test/fake_adaptation_constraint.cc",
+      "test/fake_adaptation_constraint.h",
+      "test/fake_adaptation_listener.cc",
+      "test/fake_adaptation_listener.h",
       "test/fake_frame_rate_provider.cc",
       "test/fake_frame_rate_provider.h",
       "test/fake_resource.cc",
@@ -86,9 +97,15 @@ if (rtc_include_tests) {
     ]
     deps = [
       ":resource_adaptation",
+      "../../api:scoped_refptr",
+      "../../api/adaptation:resource_adaptation_api",
+      "../../api/task_queue:task_queue",
       "../../api/video:video_stream_encoder",
       "../../rtc_base:rtc_base_approved",
+      "../../rtc_base/synchronization:sequence_checker",
+      "../../rtc_base/task_utils:to_queued_task",
       "../../test:test_support",
+      "//third_party/abseil-cpp/absl/types:optional",
     ]
   }
 }

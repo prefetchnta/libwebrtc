@@ -113,6 +113,7 @@ rtc_library("video") {
     "../modules/video_coding:nack_module",
     "../modules/video_coding:video_codec_interface",
     "../modules/video_coding:video_coding_utility",
+    "../modules/video_coding/deprecated:nack_module",
     "../modules/video_processing",
     "../rtc_base:checks",
     "../rtc_base:rate_limiter",
@@ -211,6 +212,7 @@ rtc_library("video_stream_encoder_impl") {
 
   deps = [
     "../api:rtp_parameters",
+    "../api/adaptation:resource_adaptation_api",
     "../api/task_queue:task_queue",
     "../api/units:data_rate",
     "../api/video:encoded_image",
@@ -563,6 +565,7 @@ if (rtc_include_tests) {
       "../api:scoped_refptr",
       "../api:simulated_network_api",
       "../api:transport_api",
+      "../api/adaptation:resource_adaptation_api",
       "../api/crypto:options",
       "../api/rtc_event_log",
       "../api/task_queue",

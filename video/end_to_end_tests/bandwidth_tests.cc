@@ -16,7 +16,7 @@
 #include "api/video/video_bitrate_allocation.h"
 #include "call/fake_network_pipe.h"
 #include "call/simulated_network.h"
-#include "modules/rtp_rtcp/include/rtp_rtcp.h"
+#include "modules/rtp_rtcp/source/rtp_rtcp_impl2.h"
 #include "rtc_base/rate_limiter.h"
 #include "rtc_base/task_queue_for_test.h"
 #include "rtc_base/task_utils/to_queued_task.h"
@@ -238,13 +238,13 @@ TEST_F(BandwidthEndToEndTest, RembWithSendSideBwe) {
       encoder_config->max_bitrate_bps = 2000000;
 
       ASSERT_EQ(1u, receive_configs->size());
-      RtpRtcp::Configuration config;
+      RtpRtcpInterface::Configuration config;
       config.receiver_only = true;
       config.clock = clock_;
       config.outgoing_transport = receive_transport_;
       config.retransmission_rate_limiter = &retransmission_rate_limiter_;
       config.local_media_ssrc = (*receive_configs)[0].rtp.local_ssrc;
-      rtp_rtcp_ = RtpRtcp::Create(config);
+      rtp_rtcp_ = ModuleRtpRtcpImpl2::Create(config);
       rtp_rtcp_->SetRemoteSSRC((*receive_configs)[0].rtp.remote_ssrc);
       rtp_rtcp_->SetRTCPStatus(RtcpMode::kReducedSize);
     }
@@ -303,7 +303,7 @@ TEST_F(BandwidthEndToEndTest, RembWithSendSideBwe) {
     Clock* const clock_;
     uint32_t sender_ssrc_;
     int remb_bitrate_bps_;
-    std::unique_ptr<RtpRtcp> rtp_rtcp_;
+    std::unique_ptr<ModuleRtpRtcpImpl2> rtp_rtcp_;
     test::PacketTransport* receive_transport_;
     TestState state_;
     RateLimiter retransmission_rate_limiter_;

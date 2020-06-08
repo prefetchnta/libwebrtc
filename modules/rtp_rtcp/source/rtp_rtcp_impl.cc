@@ -39,7 +39,7 @@ const int64_t kDefaultExpectedRetransmissionTimeMs = 125;
 }  // namespace
 
 ModuleRtpRtcpImpl::RtpSenderContext::RtpSenderContext(
-    const RtpRtcp::Configuration& config)
+    const RtpRtcpInterface::Configuration& config)
     : packet_history(config.clock, config.enable_rtx_padding_prioritization),
       packet_sender(config, &packet_history),
       non_paced_sender(&packet_sender),
@@ -47,6 +47,14 @@ ModuleRtpRtcpImpl::RtpSenderContext::RtpSenderContext(
           config,
           &packet_history,
           config.paced_sender ? config.paced_sender : &non_paced_sender) {}
+
+std::unique_ptr<RtpRtcp> RtpRtcp::DEPRECATED_Create(
+    const Configuration& configuration) {
+  RTC_DCHECK(configuration.clock);
+  RTC_LOG(LS_ERROR)
+      << "*********** USING WebRTC INTERNAL IMPLEMENTATION DETAILS ***********";
+  return std::make_unique<ModuleRtpRtcpImpl>(configuration);
+}
 
 ModuleRtpRtcpImpl::ModuleRtpRtcpImpl(const Configuration& configuration)
     : rtcp_sender_(configuration),

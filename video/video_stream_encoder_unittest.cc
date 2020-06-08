@@ -26,6 +26,8 @@
 #include "api/video_codecs/video_encoder.h"
 #include "api/video_codecs/vp8_temporal_layers.h"
 #include "api/video_codecs/vp8_temporal_layers_factory.h"
+#include "call/adaptation/test/fake_adaptation_constraint.h"
+#include "call/adaptation/test/fake_adaptation_listener.h"
 #include "call/adaptation/test/fake_resource.h"
 #include "common_video/h264/h264_common.h"
 #include "common_video/include/video_frame_buffer.h"
@@ -186,12 +188,12 @@ class FakeQualityScalerQpUsageHandlerCallback
   absl::optional<bool> clear_qp_samples_result_;
 };
 
-class VideoSourceRestrictionsUpdatedListener
-    : public ResourceAdaptationProcessorListener {
+class FakeVideoSourceRestrictionsListener
+    : public VideoSourceRestrictionsListener {
  public:
-  VideoSourceRestrictionsUpdatedListener()
+  FakeVideoSourceRestrictionsListener()
       : was_restrictions_updated_(false), restrictions_updated_event_() {}
-  ~VideoSourceRestrictionsUpdatedListener() override {
+  ~FakeVideoSourceRestrictionsListener() override {
     RTC_DCHECK(was_restrictions_updated_);
   }
 
@@ -199,7 +201,7 @@ class VideoSourceRestrictionsUpdatedListener
     return &restrictions_updated_event_;
   }
 
-  // ResourceAdaptationProcessorListener implementation.
+  // VideoSourceRestrictionsListener implementation.
   void OnVideoSourceRestrictionsUpdated(
       VideoSourceRestrictions restrictions,
       const VideoAdaptationCounters& adaptation_counters,
@@ -316,25 +318,25 @@ class VideoStreamEncoderUnderTest : public VideoStreamEncoder {
                                overuse_detector_proxy_ =
                                    new CpuOveruseDetectorProxy(stats_proxy)),
                            task_queue_factory),
-        fake_cpu_resource_(new FakeResource("FakeResource[CPU]")),
-        fake_quality_resource_(new FakeResource("FakeResource[QP]")) {
-    fake_cpu_resource_->Initialize(encoder_queue(),
-                                   resource_adaptation_queue());
-    fake_quality_resource_->Initialize(encoder_queue(),
-                                       resource_adaptation_queue());
+        fake_cpu_resource_(FakeResource::Create("FakeResource[CPU]")),
+        fake_quality_resource_(FakeResource::Create("FakeResource[QP]")),
+        fake_adaptation_constraint_("FakeAdaptationConstraint"),
+        fake_adaptation_listener_() {
     InjectAdaptationResource(fake_quality_resource_,
                              VideoAdaptationReason::kQuality);
     InjectAdaptationResource(fake_cpu_resource_, VideoAdaptationReason::kCpu);
+    InjectAdaptationConstraint(&fake_adaptation_constraint_);
+    InjectAdaptationListener(&fake_adaptation_listener_);
   }
 
   void SetSourceAndWaitForRestrictionsUpdated(
       rtc::VideoSourceInterface<VideoFrame>* source,
       const DegradationPreference& degradation_preference) {
-    VideoSourceRestrictionsUpdatedListener listener;
-    AddAdaptationListenerForTesting(&listener);
+    FakeVideoSourceRestrictionsListener listener;
+    AddRestrictionsListenerForTesting(&listener);
     SetSource(source, degradation_preference);
     listener.restrictions_updated_event()->Wait(5000);
-    RemoveAdaptationListenerForTesting(&listener);
+    RemoveRestrictionsListenerForTesting(&listener);
   }
 
   void SetSourceAndWaitForFramerateUpdated(
@@ -379,7 +381,7 @@ class VideoStreamEncoderUnderTest : public VideoStreamEncoder {
   void TriggerCpuOveruse() {
     rtc::Event event;
     resource_adaptation_queue()->PostTask([this, &event] {
-      fake_cpu_resource_->set_usage_state(ResourceUsageState::kOveruse);
+      fake_cpu_resource_->SetUsageState(ResourceUsageState::kOveruse);
       event.Set();
     });
     ASSERT_TRUE(event.Wait(5000));
@@ -387,7 +389,7 @@ class VideoStreamEncoderUnderTest : public VideoStreamEncoder {
   void TriggerCpuUnderuse() {
     rtc::Event event;
     resource_adaptation_queue()->PostTask([this, &event] {
-      fake_cpu_resource_->set_usage_state(ResourceUsageState::kUnderuse);
+      fake_cpu_resource_->SetUsageState(ResourceUsageState::kUnderuse);
       event.Set();
     });
     ASSERT_TRUE(event.Wait(5000));
@@ -397,7 +399,7 @@ class VideoStreamEncoderUnderTest : public VideoStreamEncoder {
   void TriggerQualityLow() {
     rtc::Event event;
     resource_adaptation_queue()->PostTask([this, &event] {
-      fake_quality_resource_->set_usage_state(ResourceUsageState::kOveruse);
+      fake_quality_resource_->SetUsageState(ResourceUsageState::kOveruse);
       event.Set();
     });
     ASSERT_TRUE(event.Wait(5000));
@@ -405,7 +407,7 @@ class VideoStreamEncoderUnderTest : public VideoStreamEncoder {
   void TriggerQualityHigh() {
     rtc::Event event;
     resource_adaptation_queue()->PostTask([this, &event] {
-      fake_quality_resource_->set_usage_state(ResourceUsageState::kUnderuse);
+      fake_quality_resource_->SetUsageState(ResourceUsageState::kUnderuse);
       event.Set();
     });
     ASSERT_TRUE(event.Wait(5000));
@@ -430,6 +432,8 @@ class VideoStreamEncoderUnderTest : public VideoStreamEncoder {
   CpuOveruseDetectorProxy* overuse_detector_proxy_;
   rtc::scoped_refptr<FakeResource> fake_cpu_resource_;
   rtc::scoped_refptr<FakeResource> fake_quality_resource_;
+  FakeAdaptationConstraint fake_adaptation_constraint_;
+  FakeAdaptationListener fake_adaptation_listener_;
 };
 
 class VideoStreamFactory
@@ -554,9 +558,9 @@ class AdaptingFrameForwarder : public test::FrameForwarder {
   void AddOrUpdateSink(rtc::VideoSinkInterface<VideoFrame>* sink,
                        const rtc::VideoSinkWants& wants) override {
     rtc::CritScope cs(&crit_);
-    last_wants_ = sink_wants();
+    last_wants_ = sink_wants_locked();
     adapter_.OnSinkWants(wants);
-    test::FrameForwarder::AddOrUpdateSink(sink, wants);
+    test::FrameForwarder::AddOrUpdateSinkLocked(sink, wants);
   }
   cricket::VideoAdapter adapter_;
   bool adaptation_enabled_ RTC_GUARDED_BY(crit_);

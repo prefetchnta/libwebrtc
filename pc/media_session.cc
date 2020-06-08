@@ -268,19 +268,6 @@ static StreamParamsVec GetCurrentStreamParams(
   return stream_params;
 }
 
-// Filters the data codecs for the data channel type.
-void FilterDataCodecs(std::vector<DataCodec>* codecs, bool sctp) {
-  // Filter RTP codec for SCTP and vice versa.
-  const char* codec_name =
-      sctp ? kGoogleRtpDataCodecName : kGoogleSctpDataCodecName;
-  codecs->erase(std::remove_if(codecs->begin(), codecs->end(),
-                               [&codec_name](const DataCodec& codec) {
-                                 return absl::EqualsIgnoreCase(codec.name,
-                                                               codec_name);
-                               }),
-                codecs->end());
-}
-
 static StreamParams CreateStreamParamsForNewSenderWithSsrcs(
     const SenderOptions& sender,
     const std::string& rtcp_cname,
@@ -1483,8 +1470,6 @@ std::unique_ptr<SessionDescription> MediaSessionDescriptionFactory::CreateOffer(
     // If application doesn't want CN codecs in offer.
     StripCNCodecs(&offer_audio_codecs);
   }
-  FilterDataCodecs(&offer_rtp_data_codecs,
-                   session_options.data_channel_type == DCT_SCTP);
 
   RtpHeaderExtensions audio_rtp_extensions;
   RtpHeaderExtensions video_rtp_extensions;
@@ -1628,8 +1613,6 @@ MediaSessionDescriptionFactory::CreateAnswer(
     // If application doesn't want CN codecs in answer.
     StripCNCodecs(&answer_audio_codecs);
   }
-  FilterDataCodecs(&answer_rtp_data_codecs,
-                   session_options.data_channel_type == DCT_SCTP);
 
   auto answer = std::make_unique<SessionDescription>();
 

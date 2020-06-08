@@ -38,7 +38,6 @@ namespace webrtc {
 namespace {
 
 // Encoder configuration parameters
-constexpr int kQpMax = 56;
 constexpr int kQpMin = 10;
 constexpr int kUsageProfile = 1;     // 0 = good quality; 1 = real-time.
 constexpr int kMinQindex = 58;       // Min qindex threshold for QP scaling.
@@ -50,10 +49,10 @@ constexpr float kMinimumFrameRate = 1.0;
 
 // Only positive speeds, range for real-time coding currently is: 6 - 8.
 // Lower means slower/better quality, higher means fastest/lower quality.
-int GetCpuSpeed(int width, int height) {
+int GetCpuSpeed(int width, int height, int number_of_cores) {
   // For smaller resolutions, use lower speed setting (get some coding gain at
   // the cost of increased encoding complexity).
-  if (width * height <= 320 * 180)
+  if (number_of_cores > 2 && width * height <= 320 * 180)
     return 6;
   else if (width * height >= 1280 * 720)
     return 8;
@@ -184,7 +183,7 @@ int LibaomAv1Encoder::InitEncode(const VideoCodec* codec_settings,
   cfg_.g_input_bit_depth = kBitDepth;
   cfg_.kf_mode = AOM_KF_DISABLED;
   cfg_.rc_min_quantizer = kQpMin;
-  cfg_.rc_max_quantizer = kQpMax;
+  cfg_.rc_max_quantizer = encoder_settings_.qpMax;
   cfg_.g_usage = kUsageProfile;
   if (svc_controller_->StreamConfig().num_spatial_layers > 1 ||
       svc_controller_->StreamConfig().num_temporal_layers > 1) {
@@ -214,8 +213,9 @@ int LibaomAv1Encoder::InitEncode(const VideoCodec* codec_settings,
   inited_ = true;
 
   // Set control parameters
-  ret = aom_codec_control(&ctx_, AOME_SET_CPUUSED,
-                          GetCpuSpeed(cfg_.g_w, cfg_.g_h));
+  ret = aom_codec_control(
+      &ctx_, AOME_SET_CPUUSED,
+      GetCpuSpeed(cfg_.g_w, cfg_.g_h, settings.number_of_cores));
   if (ret != AOM_CODEC_OK) {
     RTC_LOG(LS_WARNING) << "LibaomAv1Encoder::EncodeInit returned " << ret
                         << " on control AV1E_SET_CPUUSED.";
@@ -254,6 +254,24 @@ int LibaomAv1Encoder::InitEncode(const VideoCodec* codec_settings,
                         << " on control AV1E_SET_MAX_INTRA_BITRATE_PCT.";
     return WEBRTC_VIDEO_CODEC_ERROR;
   }
+  ret = aom_codec_control(&ctx_, AV1E_SET_COEFF_COST_UPD_FREQ, 2);
+  if (ret != AOM_CODEC_OK) {
+    RTC_LOG(LS_WARNING) << "LibaomAv1Encoder::EncodeInit returned " << ret
+                        << " on control AV1E_SET_COEFF_COST_UPD_FREQ.";
+    return WEBRTC_VIDEO_CODEC_ERROR;
+  }
+  ret = aom_codec_control(&ctx_, AV1E_SET_MODE_COST_UPD_FREQ, 2);
+  if (ret != AOM_CODEC_OK) {
+    RTC_LOG(LS_WARNING) << "LibaomAv1Encoder::EncodeInit returned " << ret
+                        << " on control AV1E_SET_MODE_COST_UPD_FREQ.";
+    return WEBRTC_VIDEO_CODEC_ERROR;
+  }
+  ret = aom_codec_control(&ctx_, AV1E_SET_MV_COST_UPD_FREQ, 3);
+  if (ret != AOM_CODEC_OK) {
+    RTC_LOG(LS_WARNING) << "LibaomAv1Encoder::EncodeInit returned " << ret
+                        << " on control AV1E_SET_MV_COST_UPD_FREQ.";
+    return WEBRTC_VIDEO_CODEC_ERROR;
+  }
 
   return WEBRTC_VIDEO_CODEC_OK;
 }
@@ -284,7 +302,7 @@ bool LibaomAv1Encoder::SetSvcParams(
       svc_config.num_spatial_layers * svc_config.num_temporal_layers;
   for (int i = 0; i < num_layers; ++i) {
     svc_params.min_quantizers[i] = kQpMin;
-    svc_params.max_quantizers[i] = kQpMax;
+    svc_params.max_quantizers[i] = encoder_settings_.qpMax;
   }
 
   // Assume each temporal layer doubles framerate.
