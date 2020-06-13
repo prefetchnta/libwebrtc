@@ -536,11 +536,11 @@ template("rtc_source_set") {
     # converted to //third_party/abseil-cpp:absl if is_component_build=true
     # otherwise it just needs to be added to deps.
     if (absl_deps != []) {
-      if (is_component_build && build_with_chromium) {
-        # TODO(crbug.com/1046390): Enable when the Abseil component will be
-        # available.
-        # deps += [ "//third_party/abseil-cpp:absl" ]
-        deps += absl_deps  # Remove when the line above is enabled.
+      if (!defined(deps)) {
+        deps = []
+      }
+      if (build_with_chromium) {
+        deps += [ "//third_party/abseil-cpp:absl" ]
       } else {
         deps += absl_deps
       }
@@ -625,11 +625,11 @@ template("rtc_static_library") {
     # converted to //third_party/abseil-cpp:absl if is_component_build=true
     # otherwise it just needs to be added to deps.
     if (absl_deps != []) {
-      if (is_component_build && build_with_chromium) {
-        # TODO(crbug.com/1046390): Enable when the Abseil component will be
-        # available.
-        # deps += [ "//third_party/abseil-cpp:absl" ]
-        deps += absl_deps  # Remove when the line above is enabled.
+      if (!defined(deps)) {
+        deps = []
+      }
+      if (build_with_chromium) {
+        deps += [ "//third_party/abseil-cpp:absl" ]
       } else {
         deps += absl_deps
       }
@@ -751,11 +751,11 @@ template("rtc_library") {
     # converted to //third_party/abseil-cpp:absl if is_component_build=true
     # otherwise it just needs to be added to deps.
     if (absl_deps != []) {
-      if (is_component_build && build_with_chromium) {
-        # TODO(crbug.com/1046390): Enable when the Abseil component will be
-        # available.
-        # deps += [ "//third_party/abseil-cpp:absl" ]
-        deps += absl_deps  # Remove when the line above is enabled.
+      if (!defined(deps)) {
+        deps = []
+      }
+      if (build_with_chromium) {
+        deps += [ "//third_party/abseil-cpp:absl" ]
       } else {
         deps += absl_deps
       }
@@ -1068,6 +1068,9 @@ if (is_android) {
       # Treat warnings as errors.
       errorprone_args = []
       errorprone_args += [ "-Werror" ]
+
+      # Use WebRTC-specific android lint suppressions file.
+      lint_suppressions_file = "//tools_webrtc/android/suppressions.xml"
 
       if (!defined(deps)) {
         deps = []

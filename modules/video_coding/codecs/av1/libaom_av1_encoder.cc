@@ -331,8 +331,8 @@ bool LibaomAv1Encoder::SetSvcParams(
 void LibaomAv1Encoder::SetSvcLayerId(
     const ScalableVideoController::LayerFrameConfig& layer_frame) {
   aom_svc_layer_id_t layer_id = {};
-  layer_id.spatial_layer_id = layer_frame.spatial_id;
-  layer_id.temporal_layer_id = layer_frame.temporal_id;
+  layer_id.spatial_layer_id = layer_frame.SpatialId();
+  layer_id.temporal_layer_id = layer_frame.TemporalId();
   aom_codec_err_t ret =
       aom_codec_control(&ctx_, AV1E_SET_SVC_LAYER_ID, &layer_id);
   if (ret != AOM_CODEC_OK) {
@@ -354,9 +354,9 @@ void LibaomAv1Encoder::SetSvcRefFrameConfig(
   static constexpr int kAv1NumBuffers = 8;
 
   aom_svc_ref_frame_config_t ref_frame_config = {};
-  RTC_CHECK_LE(layer_frame.buffers.size(), ABSL_ARRAYSIZE(kPreferedSlotName));
-  for (size_t i = 0; i < layer_frame.buffers.size(); ++i) {
-    const CodecBufferUsage& buffer = layer_frame.buffers[i];
+  RTC_CHECK_LE(layer_frame.Buffers().size(), ABSL_ARRAYSIZE(kPreferedSlotName));
+  for (size_t i = 0; i < layer_frame.Buffers().size(); ++i) {
+    const CodecBufferUsage& buffer = layer_frame.Buffers()[i];
     int slot_name = kPreferedSlotName[i];
     RTC_CHECK_GE(buffer.id, 0);
     RTC_CHECK_LT(buffer.id, kAv1NumBuffers);
@@ -442,7 +442,7 @@ int32_t LibaomAv1Encoder::Encode(
 
   for (ScalableVideoController::LayerFrameConfig& layer_frame : layer_frames) {
     aom_enc_frame_flags_t flags =
-        layer_frame.is_keyframe ? AOM_EFLAG_FORCE_KF : 0;
+        layer_frame.IsKeyframe() ? AOM_EFLAG_FORCE_KF : 0;
 
     if (svc_enabled_) {
       SetSvcLayerId(layer_frame);
@@ -471,24 +471,14 @@ int32_t LibaomAv1Encoder::Encode(
                                  "one data packet for an input video frame.";
           Release();
         }
-        // TODO(bugs.webrtc.org/11174): Remove this hack when
-        // webrtc_pc_e2e::SingleProcessEncodedImageDataInjector not used or
-        // fixed not to assume that encoded image transfered as is.
-        const uint8_t* data = static_cast<const uint8_t*>(pkt->data.frame.buf);
-        size_t size = pkt->data.frame.sz;
-        if (size > 2 && data[0] == 0b0'0010'010 && data[1] == 0) {
-          // Typically frame starts with a Temporal Delimter OBU of size 0 that
-          // is not need by any component in webrtc and discarded during rtp
-          // packetization. Before discarded it confuses test framework that
-          // assumes received encoded frame is exactly same as sent frame.
-          data += 2;
-          size -= 2;
-        }
-        encoded_image.SetEncodedData(EncodedImageBuffer::Create(data, size));
+        encoded_image.SetEncodedData(EncodedImageBuffer::Create(
+            /*data=*/static_cast<const uint8_t*>(pkt->data.frame.buf),
+            /*size=*/pkt->data.frame.sz));
 
-        layer_frame.is_keyframe =
-            ((pkt->data.frame.flags & AOM_EFLAG_FORCE_KF) != 0);
-        encoded_image._frameType = layer_frame.is_keyframe
+        if ((pkt->data.frame.flags & AOM_EFLAG_FORCE_KF) != 0) {
+          layer_frame.Keyframe();
+        }
+        encoded_image._frameType = layer_frame.IsKeyframe()
                                        ? VideoFrameType::kVideoFrameKey
                                        : VideoFrameType::kVideoFrameDelta;
         encoded_image.SetTimestamp(frame.timestamp());
@@ -517,7 +507,7 @@ int32_t LibaomAv1Encoder::Encode(
     if (encoded_image.size() > 0) {
       CodecSpecificInfo codec_specific_info;
       codec_specific_info.codecType = kVideoCodecAV1;
-      bool is_keyframe = layer_frame.is_keyframe;
+      bool is_keyframe = layer_frame.IsKeyframe();
       codec_specific_info.generic_frame_info =
           svc_controller_->OnEncodeDone(std::move(layer_frame));
       if (is_keyframe && codec_specific_info.generic_frame_info) {

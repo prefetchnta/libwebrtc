@@ -20,8 +20,14 @@
 #include "api/video/video_frame_type.h"
 #include "modules/video_coding/chain_diff_calculator.h"
 #include "modules/video_coding/codecs/av1/scalability_structure_l1t2.h"
+#include "modules/video_coding/codecs/av1/scalability_structure_l1t3.h"
 #include "modules/video_coding/codecs/av1/scalability_structure_l2t1.h"
 #include "modules/video_coding/codecs/av1/scalability_structure_l2t1_key.h"
+#include "modules/video_coding/codecs/av1/scalability_structure_l2t2.h"
+#include "modules/video_coding/codecs/av1/scalability_structure_l2t2_key.h"
+#include "modules/video_coding/codecs/av1/scalability_structure_l2t2_key_shift.h"
+#include "modules/video_coding/codecs/av1/scalability_structure_l3t1.h"
+#include "modules/video_coding/codecs/av1/scalability_structure_l3t3.h"
 #include "modules/video_coding/codecs/av1/scalability_structure_s2t1.h"
 #include "modules/video_coding/codecs/av1/scalable_video_controller.h"
 #include "modules/video_coding/frame_dependencies_calculator.h"
@@ -69,7 +75,7 @@ class ScalabilityStructureTest : public TestWithParam<SvcTestParam> {
       for (auto& layer_frame :
            structure_controller->NextFrameConfig(/*reset=*/false)) {
         int64_t frame_id = static_cast<int64_t>(frames.size());
-        bool is_keyframe = layer_frame.is_keyframe;
+        bool is_keyframe = layer_frame.IsKeyframe();
         absl::optional<GenericFrameInfo> frame_info =
             structure_controller->OnEncodeDone(std::move(layer_frame));
         EXPECT_TRUE(frame_info.has_value());
@@ -281,13 +287,27 @@ INSTANTIATE_TEST_SUITE_P(
     ScalabilityStructureTest,
     Values(SvcTestParam{"L1T2", std::make_unique<ScalabilityStructureL1T2>,
                         /*num_temporal_units=*/4},
+           SvcTestParam{"L1T3", std::make_unique<ScalabilityStructureL1T3>,
+                        /*num_temporal_units=*/8},
            SvcTestParam{"L2T1", std::make_unique<ScalabilityStructureL2T1>,
                         /*num_temporal_units=*/3},
            SvcTestParam{"L2T1Key",
                         std::make_unique<ScalabilityStructureL2T1Key>,
                         /*num_temporal_units=*/3},
+           SvcTestParam{"L3T1", std::make_unique<ScalabilityStructureL3T1>,
+                        /*num_temporal_units=*/3},
+           SvcTestParam{"L3T3", std::make_unique<ScalabilityStructureL3T3>,
+                        /*num_temporal_units=*/8},
            SvcTestParam{"S2T1", std::make_unique<ScalabilityStructureS2T1>,
-                        /*num_temporal_units=*/3}),
+                        /*num_temporal_units=*/3},
+           SvcTestParam{"L2T2", std::make_unique<ScalabilityStructureL2T2>,
+                        /*num_temporal_units=*/4},
+           SvcTestParam{"L2T2Key",
+                        std::make_unique<ScalabilityStructureL2T2Key>,
+                        /*num_temporal_units=*/4},
+           SvcTestParam{"L2T2KeyShift",
+                        std::make_unique<ScalabilityStructureL2T2KeyShift>,
+                        /*num_temporal_units=*/4}),
     [](const testing::TestParamInfo<SvcTestParam>& info) {
       return info.param.name;
     });

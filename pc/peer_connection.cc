@@ -993,8 +993,7 @@ bool PeerConnectionInterface::RTCConfiguration::operator==(
          offer_extmap_allow_mixed == o.offer_extmap_allow_mixed &&
          turn_logging_id == o.turn_logging_id &&
          enable_implicit_rollback == o.enable_implicit_rollback &&
-         allow_codec_switching == o.allow_codec_switching &&
-         enable_simulcast_stats == o.enable_simulcast_stats;
+         allow_codec_switching == o.allow_codec_switching;
 }
 
 bool PeerConnectionInterface::RTCConfiguration::operator!=(
@@ -4368,6 +4367,21 @@ PeerConnection::GetFirstAudioTransceiver() const {
     }
   }
   return nullptr;
+}
+
+void PeerConnection::AddAdaptationResource(
+    rtc::scoped_refptr<Resource> resource) {
+  if (!worker_thread()->IsCurrent()) {
+    return worker_thread()->Invoke<void>(RTC_FROM_HERE, [this, resource]() {
+      return AddAdaptationResource(resource);
+    });
+  }
+  RTC_DCHECK_RUN_ON(worker_thread());
+  if (!call_) {
+    // The PeerConnection has been closed.
+    return;
+  }
+  call_->AddAdaptationResource(resource);
 }
 
 bool PeerConnection::StartRtcEventLog(std::unique_ptr<RtcEventLogOutput> output,
