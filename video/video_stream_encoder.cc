@@ -324,7 +324,6 @@ void VideoStreamEncoder::Stop() {
                                        &shutdown_adaptation_processor_event] {
     RTC_DCHECK_RUN_ON(&resource_adaptation_queue_);
     if (resource_adaptation_processor_) {
-      resource_adaptation_processor_->StopResourceAdaptation();
       for (auto& resource : stream_resource_manager_.MappedResources()) {
         resource_adaptation_processor_->RemoveResource(resource);
       }
@@ -399,11 +398,7 @@ void VideoStreamEncoder::AddAdaptationResource(
       // this task had a chance to execute. No action needed.
       return;
     }
-    // TODO(hbos): When https://webrtc-review.googlesource.com/c/src/+/176406
-    // has landed, there is no need to Stop+Start when adding a resource.
-    resource_adaptation_processor_->StopResourceAdaptation();
     resource_adaptation_processor_->AddResource(resource);
-    resource_adaptation_processor_->StartResourceAdaptation();
     add_resource_event.Set();
   });
   add_resource_event.Wait(rtc::Event::kForever);
@@ -788,16 +783,6 @@ void VideoStreamEncoder::ReconfigureEncoder() {
     // invoked later in this method.)
     stream_resource_manager_.StopManagedResources();
     stream_resource_manager_.StartEncodeUsageResource();
-    resource_adaptation_queue_.PostTask([this] {
-      RTC_DCHECK_RUN_ON(&resource_adaptation_queue_);
-      if (!resource_adaptation_processor_) {
-        // The VideoStreamEncoder was stopped and the processor destroyed before
-        // this task had a chance to execute. No action needed.
-        return;
-      }
-      // Ensures started. If already started this is a NO-OP.
-      resource_adaptation_processor_->StartResourceAdaptation();
-    });
     pending_encoder_creation_ = false;
   }
 
@@ -1745,7 +1730,8 @@ bool VideoStreamEncoder::DropDueToSize(uint32_t pixel_count) const {
   bool simulcast_or_svc =
       (send_codec_.codecType == VideoCodecType::kVideoCodecVP9 &&
        send_codec_.VP9().numberOfSpatialLayers > 1) ||
-      send_codec_.numberOfSimulcastStreams > 1;
+      send_codec_.numberOfSimulcastStreams > 1 ||
+      encoder_config_.simulcast_layers.size() > 1;
 
   if (simulcast_or_svc || !stream_resource_manager_.DropInitialFrames() ||
       !encoder_target_bitrate_bps_.has_value()) {
