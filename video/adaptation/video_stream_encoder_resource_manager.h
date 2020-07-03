@@ -65,6 +65,7 @@ extern const int kDefaultInputPixelsHeight;
 // ResourceAdaptationProcessor code such as the inital frame dropping.
 class VideoStreamEncoderResourceManager
     : public VideoSourceRestrictionsListener,
+      public ResourceLimitationsListener,
       public QualityRampUpExperimentListener {
  public:
   VideoStreamEncoderResourceManager(
@@ -72,13 +73,15 @@ class VideoStreamEncoderResourceManager
       VideoStreamEncoderObserver* encoder_stats_observer,
       Clock* clock,
       bool experiment_cpu_load_estimator,
-      std::unique_ptr<OveruseFrameDetector> overuse_detector);
+      std::unique_ptr<OveruseFrameDetector> overuse_detector,
+      DegradationPreferenceProvider* degradation_preference_provider);
   ~VideoStreamEncoderResourceManager() override;
 
   void Initialize(rtc::TaskQueue* encoder_queue,
                   rtc::TaskQueue* resource_adaptation_queue);
   void SetAdaptationProcessor(
-      ResourceAdaptationProcessorInterface* adaptation_processor);
+      ResourceAdaptationProcessorInterface* adaptation_processor,
+      VideoStreamAdapter* stream_adapter);
 
   // TODO(https://crbug.com/webrtc/11563): The degradation preference is a
   // setting of the Processor, it does not belong to the Manager - can we get
@@ -130,7 +133,8 @@ class VideoStreamEncoderResourceManager
   void OnVideoSourceRestrictionsUpdated(
       VideoSourceRestrictions restrictions,
       const VideoAdaptationCounters& adaptation_counters,
-      rtc::scoped_refptr<Resource> reason) override;
+      rtc::scoped_refptr<Resource> reason,
+      const VideoSourceRestrictions& unfiltered_restrictions) override;
   void OnResourceLimitationChanged(
       rtc::scoped_refptr<Resource> resource,
       const std::map<rtc::scoped_refptr<Resource>, VideoAdaptationCounters>&
@@ -199,12 +203,12 @@ class VideoStreamEncoderResourceManager
   class BalancedConstraint : public rtc::RefCountInterface,
                              public AdaptationConstraint {
    public:
-    explicit BalancedConstraint(VideoStreamEncoderResourceManager* manager);
+    BalancedConstraint(
+        VideoStreamEncoderResourceManager* manager,
+        DegradationPreferenceProvider* degradation_preference_provider);
     ~BalancedConstraint() override = default;
 
     void SetAdaptationQueue(TaskQueueBase* resource_adaptation_queue);
-    void SetAdaptationProcessor(
-        ResourceAdaptationProcessorInterface* adaptation_processor);
     void OnEncoderTargetBitrateUpdated(
         absl::optional<uint32_t> encoder_target_bitrate_bps);
 
@@ -221,12 +225,12 @@ class VideoStreamEncoderResourceManager
     // ResourceAdaptationProcessor, i.e. when IsAdaptationUpAllowed() is called.
     VideoStreamEncoderResourceManager* const manager_;
     TaskQueueBase* resource_adaptation_queue_;
-    ResourceAdaptationProcessorInterface* adaptation_processor_
-        RTC_GUARDED_BY(resource_adaptation_queue_);
     absl::optional<uint32_t> encoder_target_bitrate_bps_
         RTC_GUARDED_BY(resource_adaptation_queue_);
+    DegradationPreferenceProvider* degradation_preference_provider_;
   };
 
+  DegradationPreferenceProvider* const degradation_preference_provider_;
   const rtc::scoped_refptr<BitrateConstraint> bitrate_constraint_;
   const rtc::scoped_refptr<BalancedConstraint> balanced_constraint_;
   const rtc::scoped_refptr<EncodeUsageResource> encode_usage_resource_;
@@ -237,6 +241,8 @@ class VideoStreamEncoderResourceManager
   VideoStreamInputStateProvider* const input_state_provider_
       RTC_GUARDED_BY(encoder_queue_);
   ResourceAdaptationProcessorInterface* adaptation_processor_
+      RTC_GUARDED_BY(resource_adaptation_queue_);
+  VideoStreamAdapter* stream_adapter_
       RTC_GUARDED_BY(resource_adaptation_queue_);
   // Thread-safe.
   VideoStreamEncoderObserver* const encoder_stats_observer_;

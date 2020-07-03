@@ -1293,8 +1293,7 @@ class WebRtcSdpTest : public ::testing::Test {
         "inline:NzB4d1BINUAvLEw6UzF3WSJ+PSdFcGdUJShpX1Zj|2^20|1:32",
         "dummy_session_params"));
     audio->set_protocol(cricket::kMediaProtocolSavpf);
-    AudioCodec opus(111, "opus", 48000, 0, 2);
-    audio->AddCodec(opus);
+    audio->AddCodec(AudioCodec(111, "opus", 48000, 0, 2));
     audio->AddCodec(AudioCodec(103, "ISAC", 16000, 0, 1));
     audio->AddCodec(AudioCodec(104, "ISAC", 32000, 0, 1));
     return audio;
@@ -1934,13 +1933,14 @@ class WebRtcSdpTest : public ::testing::Test {
         // description.
         "a=msid-semantic: WMS\r\n"
         // Pl type 111 preferred.
-        "m=audio 9 RTP/SAVPF 111 104 103\r\n"
+        "m=audio 9 RTP/SAVPF 111 104 103 105\r\n"
         // Pltype 111 listed before 103 and 104 in the map.
         "a=rtpmap:111 opus/48000/2\r\n"
         // Pltype 103 listed before 104.
         "a=rtpmap:103 ISAC/16000\r\n"
         "a=rtpmap:104 ISAC/32000\r\n"
-        "a=fmtp:111 0-15,66,70\r\n"
+        "a=rtpmap:105 telephone-event/8000\r\n"
+        "a=fmtp:105 0-15,66,70\r\n"
         "a=fmtp:111 ";
     std::ostringstream os;
     os << "minptime=" << params.min_ptime << "; stereo=" << params.stereo
@@ -1986,6 +1986,14 @@ class WebRtcSdpTest : public ::testing::Test {
       VerifyCodecParameter(codec.params, "ptime", params.ptime);
       VerifyCodecParameter(codec.params, "maxptime", params.max_ptime);
     }
+
+    cricket::AudioCodec dtmf = acd->codecs()[3];
+    EXPECT_EQ("telephone-event", dtmf.name);
+    EXPECT_EQ(105, dtmf.id);
+    EXPECT_EQ(3u,
+              dtmf.params.size());  // ptime and max_ptime count as parameters.
+    EXPECT_EQ(dtmf.params.begin()->first, "");
+    EXPECT_EQ(dtmf.params.begin()->second, "0-15,66,70");
 
     const VideoContentDescription* vcd =
         GetFirstVideoContentDescription(jdesc_output->description());
@@ -2917,6 +2925,24 @@ TEST_F(WebRtcSdpTest, DeserializeSdpWithSctpDataChannelsWithSctpColonPort) {
   EXPECT_TRUE(CompareSessionDescription(jdesc, jdesc_output));
 }
 
+TEST_F(WebRtcSdpTest, DeserializeSdpWithSctpDataChannelsButWrongMediaType) {
+  bool use_sctpmap = true;
+  AddSctpDataChannel(use_sctpmap);
+  JsepSessionDescription jdesc(kDummyType);
+  ASSERT_TRUE(jdesc.Initialize(desc_.Clone(), kSessionId, kSessionVersion));
+
+  std::string sdp = kSdpSessionString;
+  sdp += kSdpSctpDataChannelString;
+
+  const char needle[] = "m=application ";
+  sdp.replace(sdp.find(needle), strlen(needle), "m=application:bogus ");
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  EXPECT_TRUE(SdpDeserialize(sdp, &jdesc_output));
+
+  EXPECT_EQ(0u, jdesc_output.description()->contents().size());
+}
+
 // Helper function to set the max-message-size parameter in the
 // SCTP data codec.
 void MutateJsepSctpMaxMessageSize(const SessionDescription& desc,
@@ -3265,6 +3291,7 @@ TEST_F(WebRtcSdpTest, DeserializeBrokenSdp) {
   // Broken media description
   ExpectParseFailure("m=audio", "c=IN IP4 74.125.224.39");
   ExpectParseFailure("m=video", kSdpDestroyer);
+  ExpectParseFailure("m=", "c=IN IP4 74.125.224.39");
 
   // Invalid lines
   ExpectParseFailure("a=candidate", kSdpEmptyType);
@@ -3570,6 +3597,28 @@ TEST_F(WebRtcSdpTest, SerializeAudioFmtpWithPTimeAndMaxPTime) {
               "a=maxptime:120\r\n"  // No comma here. String merging!
               "a=ptime:20\r\n",
               &sdp_with_fmtp);
+  EXPECT_EQ(sdp_with_fmtp, message);
+}
+
+TEST_F(WebRtcSdpTest, SerializeAudioFmtpWithTelephoneEvent) {
+  AudioContentDescription* acd = GetFirstAudioContentDescription(&desc_);
+
+  cricket::AudioCodecs codecs = acd->codecs();
+  cricket::AudioCodec dtmf(105, "telephone-event", 8000, 0, 1);
+  dtmf.params[""] = "0-15";
+  codecs.push_back(dtmf);
+  acd->set_codecs(codecs);
+
+  ASSERT_TRUE(jdesc_.Initialize(desc_.Clone(), jdesc_.session_id(),
+                                jdesc_.session_version()));
+  std::string message = webrtc::SdpSerialize(jdesc_);
+  std::string sdp_with_fmtp = kSdpFullString;
+  InjectAfter("m=audio 2345 RTP/SAVPF 111 103 104", " 105", &sdp_with_fmtp);
+  InjectAfter(
+      "a=rtpmap:104 ISAC/32000\r\n",
+      "a=rtpmap:105 telephone-event/8000\r\n"  // No comma here. String merging!
+      "a=fmtp:105 0-15\r\n",
+      &sdp_with_fmtp);
   EXPECT_EQ(sdp_with_fmtp, message);
 }
 
@@ -4615,4 +4664,24 @@ TEST_F(WebRtcSdpTest, DeserializeSessionDescriptionWithoutCname) {
   ASSERT_TRUE(jdesc_.Initialize(desc_.Clone(), jdesc_.session_id(),
                                 jdesc_.session_version()));
   EXPECT_TRUE(CompareSessionDescription(jdesc_, new_jdesc));
+}
+
+TEST_F(WebRtcSdpTest, DeserializeSdpWithUnsupportedMediaType) {
+  bool use_sctpmap = true;
+  AddSctpDataChannel(use_sctpmap);
+  JsepSessionDescription jdesc(kDummyType);
+  ASSERT_TRUE(jdesc.Initialize(desc_.Clone(), kSessionId, kSessionVersion));
+
+  std::string sdp = kSdpSessionString;
+  sdp +=
+      "m=bogus 9 RTP/SAVPF 0 8\r\n"
+      "c=IN IP4 0.0.0.0\r\n";
+  sdp +=
+      "m=audio/something 9 RTP/SAVPF 0 8\r\n"
+      "c=IN IP4 0.0.0.0\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  EXPECT_TRUE(SdpDeserialize(sdp, &jdesc_output));
+
+  EXPECT_EQ(0u, jdesc_output.description()->contents().size());
 }

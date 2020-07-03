@@ -335,6 +335,10 @@ void RTPSenderVideo::AddRtpHeaderExtensions(
           descriptor.frame_dependencies.decode_target_indications.size(),
           video_structure_->num_decode_targets);
 
+      if (first_packet) {
+        descriptor.active_decode_targets_bitmask =
+            active_decode_targets_tracker_.ActiveDecodeTargetsBitmask();
+      }
       // To avoid extra structure copy, temporary share ownership of the
       // video_structure with the dependency descriptor.
       if (video_header.frame_type == VideoFrameType::kVideoFrameKey &&
@@ -343,7 +347,8 @@ void RTPSenderVideo::AddRtpHeaderExtensions(
             absl::WrapUnique(video_structure_.get());
       }
       extension_is_set = packet->SetExtension<RtpDependencyDescriptorExtension>(
-          *video_structure_, descriptor);
+          *video_structure_,
+          active_decode_targets_tracker_.ActiveChainsBitmask(), descriptor);
 
       // Remove the temporary shared ownership.
       descriptor.attached_structure.release();
@@ -413,6 +418,14 @@ bool RTPSenderVideo::SendVideo(
       !IsNoopDelay(current_playout_delay_)) {
     // Force playout delay on key-frames, if set.
     playout_delay_pending_ = true;
+  }
+
+  if (video_structure_ != nullptr && video_header.generic) {
+    active_decode_targets_tracker_.OnFrame(
+        video_structure_->decode_target_protected_by_chain,
+        video_header.generic->active_decode_targets,
+        video_header.frame_type == VideoFrameType::kVideoFrameKey,
+        video_header.generic->frame_id, video_header.generic->chain_diffs);
   }
 
   // Maximum size of packet including rtp headers.
@@ -585,8 +598,8 @@ bool RTPSenderVideo::SendVideo(
       if (fec_generator_) {
         fec_generator_->AddPacketAndGenerateFec(*packet);
       } else {
-        // TODO(sprang): When deferred FEC generation is enabled, just mark the
-        // packet as protected here.
+        // Deferred FEC generation, just mark packet.
+        packet->set_fec_protect_packet(true);
       }
     }
 
@@ -594,6 +607,7 @@ bool RTPSenderVideo::SendVideo(
       std::unique_ptr<RtpPacketToSend> red_packet(new RtpPacketToSend(*packet));
       BuildRedPayload(*packet, red_packet.get());
       red_packet->SetPayloadType(*red_payload_type_);
+      red_packet->set_is_red(true);
 
       // Send |red_packet| instead of |packet| for allocated sequence number.
       red_packet->set_packet_type(RtpPacketMediaType::kVideo);

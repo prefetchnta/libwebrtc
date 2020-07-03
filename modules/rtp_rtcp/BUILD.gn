@@ -295,6 +295,8 @@ rtc_library("rtp_rtcp") {
     "../../rtc_base:safe_minmax",
     "../../rtc_base/experiments:field_trial_parser",
     "../../rtc_base/synchronization:sequence_checker",
+    "../../rtc_base/task_utils:pending_task_safety_flag",
+    "../../rtc_base/task_utils:repeating_task",
     "../../rtc_base/task_utils:to_queued_task",
     "../../rtc_base/time:timestamp_extrapolator",
     "../../system_wrappers",
@@ -558,6 +560,7 @@ if (rtc_include_tests) {
       "../../test:rtp_test_utils",
       "../../test:test_common",
       "../../test:test_support",
+      "../../test/time_controller:time_controller",
       "../video_coding:codec_globals_headers",
     ]
     absl_deps = [

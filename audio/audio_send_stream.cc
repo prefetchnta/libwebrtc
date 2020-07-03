@@ -31,6 +31,7 @@
 #include "logging/rtc_event_log/events/rtc_event_audio_send_stream_config.h"
 #include "logging/rtc_event_log/rtc_stream_config.h"
 #include "modules/audio_coding/codecs/cng/audio_encoder_cng.h"
+#include "modules/audio_coding/codecs/red/audio_encoder_copy_red.h"
 #include "modules/audio_processing/include/audio_processing.h"
 #include "modules/rtp_rtcp/source/rtp_header_extensions.h"
 #include "rtc_base/checks.h"
@@ -115,18 +116,20 @@ AudioSendStream::AudioSendStream(
                       bitrate_allocator,
                       event_log,
                       suspended_rtp_state,
-                      voe::CreateChannelSend(clock,
-                                             task_queue_factory,
-                                             module_process_thread,
-                                             config.send_transport,
-                                             rtcp_rtt_stats,
-                                             event_log,
-                                             config.frame_encryptor,
-                                             config.crypto_options,
-                                             config.rtp.extmap_allow_mixed,
-                                             config.rtcp_report_interval_ms,
-                                             config.rtp.ssrc,
-                                             config.frame_transformer)) {}
+                      voe::CreateChannelSend(
+                          clock,
+                          task_queue_factory,
+                          module_process_thread,
+                          config.send_transport,
+                          rtcp_rtt_stats,
+                          event_log,
+                          config.frame_encryptor,
+                          config.crypto_options,
+                          config.rtp.extmap_allow_mixed,
+                          config.rtcp_report_interval_ms,
+                          config.rtp.ssrc,
+                          config.frame_transformer,
+                          rtp_transport->transport_feedback_observer())) {}
 
 AudioSendStream::AudioSendStream(
     Clock* clock,
@@ -505,10 +508,7 @@ webrtc::AudioSendStream::Stats AudioSendStream::GetStats(
 }
 
 void AudioSendStream::DeliverRtcp(const uint8_t* packet, size_t length) {
-  // TODO(solenberg): Tests call this function on a network thread, libjingle
-  // calls on the worker thread. We should move towards always using a network
-  // thread. Then this check can be enabled.
-  // RTC_DCHECK(!worker_thread_checker_.IsCurrent());
+  RTC_DCHECK_RUN_ON(&worker_thread_checker_);
   channel_send_->ReceivedRTCPPacket(packet, length);
   worker_queue_->PostTask([&]() {
     // Poll if overhead has changed, which it can do if ack triggers us to stop
@@ -657,6 +657,14 @@ bool AudioSendStream::SetupSendCodec(const Config& new_config) {
 
     RegisterCngPayloadType(*spec.cng_payload_type,
                            new_config.send_codec_spec->format.clockrate_hz);
+  }
+
+  // Wrap the encoder in a RED encoder, if RED is enabled.
+  if (spec.red_payload_type) {
+    AudioEncoderCopyRed::Config red_config;
+    red_config.payload_type = *spec.red_payload_type;
+    red_config.speech_encoder = std::move(encoder);
+    encoder = std::make_unique<AudioEncoderCopyRed>(std::move(red_config));
   }
 
   // Set currently known overhead (used in ANA, opus only).

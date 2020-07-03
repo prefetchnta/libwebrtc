@@ -1762,8 +1762,13 @@ void WriteRtcpFbHeader(int payload_type, rtc::StringBuilder* os) {
 void WriteFmtpParameter(const std::string& parameter_name,
                         const std::string& parameter_value,
                         rtc::StringBuilder* os) {
-  // fmtp parameters: |parameter_name|=|parameter_value|
-  *os << parameter_name << kSdpDelimiterEqual << parameter_value;
+  if (parameter_name == "") {
+    // RFC 2198 and RFC 4733 don't use key-value pairs.
+    *os << parameter_value;
+  } else {
+    // fmtp parameters: |parameter_name|=|parameter_value|
+    *os << parameter_name << kSdpDelimiterEqual << parameter_value;
+  }
 }
 
 bool IsFmtpParam(const std::string& name) {
@@ -2625,18 +2630,12 @@ bool ParseMediaDescription(
     if (!rtc::FromString<int>(fields[1], &port) || !IsValidPort(port)) {
       return ParseFailed(line, "The port number is invalid", error);
     }
-    std::string protocol = fields[2];
+    const std::string& protocol = fields[2];
 
     // <fmt>
     std::vector<int> payload_types;
     if (cricket::IsRtpProtocol(protocol)) {
       for (size_t j = 3; j < fields.size(); ++j) {
-        // TODO(wu): Remove when below bug is fixed.
-        // https://bugzilla.mozilla.org/show_bug.cgi?id=996329
-        if (fields[j].empty() && j == fields.size() - 1) {
-          continue;
-        }
-
         int pl = 0;
         if (!GetPayloadTypeFromString(line, fields[j], &pl, error)) {
           return false;
@@ -2656,17 +2655,18 @@ bool ParseMediaDescription(
     std::string content_name;
     bool bundle_only = false;
     int section_msid_signaling = 0;
-    if (HasAttribute(line, kMediaTypeVideo)) {
+    const std::string& media_type = fields[0];
+    if (media_type == kMediaTypeVideo) {
       content = ParseContentDescription<VideoContentDescription>(
           message, cricket::MEDIA_TYPE_VIDEO, mline_index, protocol,
           payload_types, pos, &content_name, &bundle_only,
           &section_msid_signaling, &transport, candidates, error);
-    } else if (HasAttribute(line, kMediaTypeAudio)) {
+    } else if (media_type == kMediaTypeAudio) {
       content = ParseContentDescription<AudioContentDescription>(
           message, cricket::MEDIA_TYPE_AUDIO, mline_index, protocol,
           payload_types, pos, &content_name, &bundle_only,
           &section_msid_signaling, &transport, candidates, error);
-    } else if (HasAttribute(line, kMediaTypeData)) {
+    } else if (media_type == kMediaTypeData) {
       if (cricket::IsDtlsSctp(protocol)) {
         // The draft-03 format is:
         // m=application <port> DTLS/SCTP <sctp-port>...
@@ -3608,8 +3608,10 @@ bool ParseFmtpParam(const std::string& line,
                     std::string* value,
                     SdpParseError* error) {
   if (!rtc::tokenize_first(line, kSdpDelimiterEqualChar, parameter, value)) {
-    ParseFailed(line, "Unable to parse fmtp parameter. \'=\' missing.", error);
-    return false;
+    // Support for non-key-value lines like RFC 2198 or RFC 4733.
+    *parameter = "";
+    *value = line;
+    return true;
   }
   // a=fmtp:<payload_type> <param1>=<value1>; <param2>=<value2>; ...
   return true;
@@ -3627,7 +3629,7 @@ bool ParseFmtpAttributes(const std::string& line,
   std::string line_payload;
   std::string line_params;
 
-  // RFC 5576
+  // https://tools.ietf.org/html/rfc4566#section-6
   // a=fmtp:<format> <format specific parameters>
   // At least two fields, whereas the second one is any of the optional
   // parameters.
@@ -3656,16 +3658,14 @@ bool ParseFmtpAttributes(const std::string& line,
 
   cricket::CodecParameterMap codec_params;
   for (auto& iter : fields) {
-    if (iter.find(kSdpDelimiterEqual) == std::string::npos) {
-      // Only fmtps with equals are currently supported. Other fmtp types
-      // should be ignored. Unknown fmtps do not constitute an error.
-      continue;
-    }
-
     std::string name;
     std::string value;
     if (!ParseFmtpParam(rtc::string_trim(iter), &name, &value, error)) {
       return false;
+    }
+    if (codec_params.find(name) != codec_params.end()) {
+      RTC_LOG(LS_INFO) << "Overwriting duplicate fmtp parameter with key \""
+                       << name << "\".";
     }
     codec_params[name] = value;
   }

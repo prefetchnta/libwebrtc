@@ -33,6 +33,7 @@
 #include "test/pc/e2e/analyzer/audio/default_audio_quality_analyzer.h"
 #include "test/pc/e2e/analyzer/video/default_video_quality_analyzer.h"
 #include "test/pc/e2e/analyzer/video/video_quality_metrics_reporter.h"
+#include "test/pc/e2e/cross_media_metrics_reporter.h"
 #include "test/pc/e2e/stats_poller.h"
 #include "test/pc/e2e/test_peer_factory.h"
 #include "test/testsupport/file_utils.h"
@@ -215,7 +216,10 @@ void PeerConnectionE2EQualityTest::Run(RunParams run_params) {
       bob_configurer->params()->video_configs;
   std::string bob_name = bob_configurer->params()->name.value();
 
-  alice_ = TestPeerFactory::CreateTestPeer(
+  TestPeerFactory test_peer_factory(
+      signaling_thread.get(), video_quality_analyzer_injection_helper_.get(),
+      task_queue_.get());
+  alice_ = test_peer_factory.CreateTestPeer(
       std::move(alice_configurer),
       std::make_unique<FixturePeerConnectionObserver>(
           [this, bob_video_configs, alice_name](
@@ -223,10 +227,9 @@ void PeerConnectionE2EQualityTest::Run(RunParams run_params) {
             OnTrackCallback(alice_name, transceiver, bob_video_configs);
           },
           [this]() { StartVideo(alice_video_sources_); }),
-      video_quality_analyzer_injection_helper_.get(), signaling_thread.get(),
       alice_remote_audio_config, run_params.video_encoder_bitrate_multiplier,
-      run_params.echo_emulation_config, task_queue_.get());
-  bob_ = TestPeerFactory::CreateTestPeer(
+      run_params.echo_emulation_config);
+  bob_ = test_peer_factory.CreateTestPeer(
       std::move(bob_configurer),
       std::make_unique<FixturePeerConnectionObserver>(
           [this, alice_video_configs,
@@ -234,9 +237,8 @@ void PeerConnectionE2EQualityTest::Run(RunParams run_params) {
             OnTrackCallback(bob_name, transceiver, alice_video_configs);
           },
           [this]() { StartVideo(bob_video_sources_); }),
-      video_quality_analyzer_injection_helper_.get(), signaling_thread.get(),
       bob_remote_audio_config, run_params.video_encoder_bitrate_multiplier,
-      run_params.echo_emulation_config, task_queue_.get());
+      run_params.echo_emulation_config);
 
   int num_cores = CpuInfo::DetectNumberOfCores();
   RTC_DCHECK_GE(num_cores, 1);
@@ -251,6 +253,8 @@ void PeerConnectionE2EQualityTest::Run(RunParams run_params) {
   RTC_LOG(INFO) << "video_analyzer_threads=" << video_analyzer_threads;
   quality_metrics_reporters_.push_back(
       std::make_unique<VideoQualityMetricsReporter>(clock_));
+  quality_metrics_reporters_.push_back(
+      std::make_unique<CrossMediaMetricsReporter>());
 
   video_quality_analyzer_injection_helper_->Start(
       test_case_name_,
@@ -259,7 +263,7 @@ void PeerConnectionE2EQualityTest::Run(RunParams run_params) {
       video_analyzer_threads);
   audio_quality_analyzer_->Start(test_case_name_, &analyzer_helper_);
   for (auto& reporter : quality_metrics_reporters_) {
-    reporter->Start(test_case_name_);
+    reporter->Start(test_case_name_, &analyzer_helper_);
   }
 
   // Start RTCEventLog recording if requested.
@@ -385,8 +389,10 @@ void PeerConnectionE2EQualityTest::OnTrackCallback(
       transceiver->receiver()->track();
   RTC_CHECK_EQ(transceiver->receiver()->stream_ids().size(), 2)
       << "Expected 2 stream ids: 1st - sync group, 2nd - unique stream label";
+  std::string sync_group = transceiver->receiver()->stream_ids()[0];
   std::string stream_label = transceiver->receiver()->stream_ids()[1];
-  analyzer_helper_.AddTrackToStreamMapping(track->id(), stream_label);
+  analyzer_helper_.AddTrackToStreamMapping(track->id(), stream_label,
+                                           sync_group);
   if (track->kind() != MediaStreamTrackInterface::kVideoKind) {
     return;
   }
