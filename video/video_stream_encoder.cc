@@ -19,6 +19,8 @@
 
 #include "absl/algorithm/container.h"
 #include "absl/types/optional.h"
+#include "api/task_queue/queued_task.h"
+#include "api/task_queue/task_queue_base.h"
 #include "api/video/encoded_image.h"
 #include "api/video/i420_buffer.h"
 #include "api/video/video_adaptation_reason.h"
@@ -26,15 +28,20 @@
 #include "api/video/video_codec_constants.h"
 #include "api/video_codecs/video_encoder.h"
 #include "call/adaptation/resource_adaptation_processor.h"
+#include "call/adaptation/video_stream_adapter.h"
 #include "modules/video_coding/codecs/vp9/svc_rate_allocator.h"
 #include "modules/video_coding/include/video_codec_initializer.h"
 #include "rtc_base/arraysize.h"
 #include "rtc_base/checks.h"
+#include "rtc_base/constructor_magic.h"
 #include "rtc_base/experiments/alr_experiment.h"
 #include "rtc_base/experiments/rate_control_settings.h"
 #include "rtc_base/location.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/strings/string_builder.h"
+#include "rtc_base/synchronization/mutex.h"
+#include "rtc_base/synchronization/sequence_checker.h"
+#include "rtc_base/thread_annotations.h"
 #include "rtc_base/time_utils.h"
 #include "rtc_base/trace_event.h"
 #include "system_wrappers/include/field_trial.h"
@@ -209,36 +216,38 @@ class VideoStreamEncoder::DegradationPreferenceManager
         is_screenshare_(false),
         effective_degradation_preference_(DegradationPreference::DISABLED) {}
 
-  ~DegradationPreferenceManager() override { RTC_DCHECK(listeners_.empty()); }
+  ~DegradationPreferenceManager() override {
+    RTC_DCHECK(!video_stream_adapter_);
+  }
 
   DegradationPreference degradation_preference() const override {
-    rtc::CritScope crit(&lock_);
+    MutexLock lock(&lock_);
     return effective_degradation_preference_;
   }
 
   void SetDegradationPreference(DegradationPreference degradation_preference) {
-    rtc::CritScope crit(&lock_);
+    MutexLock lock(&lock_);
     degradation_preference_ = degradation_preference;
     MaybeUpdateEffectiveDegradationPreference();
   }
 
   void SetIsScreenshare(bool is_screenshare) {
-    rtc::CritScope crit(&lock_);
+    MutexLock lock(&lock_);
     is_screenshare_ = is_screenshare;
     MaybeUpdateEffectiveDegradationPreference();
   }
 
-  void AddListener(DegradationPreferenceListener* listener) {
-    rtc::CritScope crit(&lock_);
-    RTC_DCHECK(absl::c_find(listeners_, listener) == listeners_.end());
-    listeners_.push_back(listener);
+  void SetVideoStreamAdapterQueue(
+      TaskQueueBase* video_stream_adapter_task_queue) {
+    RTC_DCHECK(!video_stream_adapter_task_queue_);
+    RTC_DCHECK(video_stream_adapter_task_queue);
+    RTC_DCHECK_RUN_ON(video_stream_adapter_task_queue);
+    video_stream_adapter_task_queue_ = video_stream_adapter_task_queue;
   }
 
-  void RemoveListener(DegradationPreferenceListener* listener) {
-    rtc::CritScope crit(&lock_);
-    auto it = absl::c_find(listeners_, listener);
-    RTC_DCHECK(it != listeners_.end());
-    listeners_.erase(it);
+  void SetVideoStreamAdapter(VideoStreamAdapter* video_stream_adapter) {
+    RTC_DCHECK_RUN_ON(video_stream_adapter_task_queue_);
+    video_stream_adapter_ = video_stream_adapter;
   }
 
  private:
@@ -252,19 +261,27 @@ class VideoStreamEncoder::DegradationPreferenceManager
 
     if (effective_degradation_preference != effective_degradation_preference_) {
       effective_degradation_preference_ = effective_degradation_preference;
-      for (auto& listener : listeners_) {
-        listener->OnDegradationPreferenceUpdated(
-            effective_degradation_preference_);
+      if (video_stream_adapter_task_queue_) {
+        video_stream_adapter_task_queue_->PostTask(
+            ToQueuedTask([this, effective_degradation_preference]() {
+              RTC_DCHECK_RUN_ON(video_stream_adapter_task_queue_);
+              if (video_stream_adapter_) {
+                video_stream_adapter_->SetDegradationPreference(
+                    effective_degradation_preference);
+              }
+            }));
       }
     }
   }
 
-  rtc::CriticalSection lock_;
+  mutable Mutex lock_;
   DegradationPreference degradation_preference_ RTC_GUARDED_BY(&lock_);
   bool is_screenshare_ RTC_GUARDED_BY(&lock_);
   DegradationPreference effective_degradation_preference_
       RTC_GUARDED_BY(&lock_);
-  std::vector<DegradationPreferenceListener*> listeners_ RTC_GUARDED_BY(&lock_);
+  TaskQueueBase* video_stream_adapter_task_queue_ = nullptr;
+  VideoStreamAdapter* video_stream_adapter_
+      RTC_GUARDED_BY(&video_stream_adapter_task_queue_);
 };
 
 VideoStreamEncoder::VideoStreamEncoder(
@@ -331,7 +348,6 @@ VideoStreamEncoder::VideoStreamEncoder(
       degradation_preference_manager_(
           std::make_unique<DegradationPreferenceManager>()),
       adaptation_constraints_(),
-      adaptation_listeners_(),
       stream_resource_manager_(&input_state_provider_,
                                encoder_stats_observer,
                                clock_,
@@ -363,20 +379,21 @@ VideoStreamEncoder::VideoStreamEncoder(
         &stream_resource_manager_);
     video_stream_adapter_->AddRestrictionsListener(&stream_resource_manager_);
     video_stream_adapter_->AddRestrictionsListener(this);
-    degradation_preference_manager_->AddListener(
-        resource_adaptation_processor_.get());
+    degradation_preference_manager_->SetVideoStreamAdapterQueue(
+        resource_adaptation_queue_.Get());
+    degradation_preference_manager_->SetVideoStreamAdapter(
+        video_stream_adapter_.get());
 
     // Add the stream resource manager's resources to the processor.
     adaptation_constraints_ = stream_resource_manager_.AdaptationConstraints();
-    adaptation_listeners_ = stream_resource_manager_.AdaptationListeners();
     for (auto& resource : stream_resource_manager_.MappedResources()) {
       resource_adaptation_processor_->AddResource(resource);
     }
     for (auto* constraint : adaptation_constraints_) {
-      resource_adaptation_processor_->AddAdaptationConstraint(constraint);
+      video_stream_adapter_->AddAdaptationConstraint(constraint);
     }
-    for (auto* listener : adaptation_listeners_) {
-      resource_adaptation_processor_->AddAdaptationListener(listener);
+    for (auto* listener : stream_resource_manager_.AdaptationListeners()) {
+      video_stream_adapter_->AddAdaptationListener(listener);
     }
     initialize_processor_event.Set();
   });
@@ -393,19 +410,24 @@ void VideoStreamEncoder::Stop() {
   RTC_DCHECK_RUN_ON(&thread_checker_);
   video_source_sink_controller_.SetSource(nullptr);
 
+  if (resource_adaptation_processor_) {
+    for (auto& resource : stream_resource_manager_.MappedResources()) {
+      resource_adaptation_processor_->RemoveResource(resource);
+    }
+  }
   rtc::Event shutdown_adaptation_processor_event;
   resource_adaptation_queue_.PostTask([this,
                                        &shutdown_adaptation_processor_event] {
     RTC_DCHECK_RUN_ON(&resource_adaptation_queue_);
     if (resource_adaptation_processor_) {
-      for (auto& resource : stream_resource_manager_.MappedResources()) {
-        resource_adaptation_processor_->RemoveResource(resource);
-      }
+      // Removed on the resource_adaptaiton_processor_ queue because the
+      // adaptation_constraints_ and adaptation_listeners_ fields are guarded by
+      // this queue.
       for (auto* constraint : adaptation_constraints_) {
-        resource_adaptation_processor_->RemoveAdaptationConstraint(constraint);
+        video_stream_adapter_->RemoveAdaptationConstraint(constraint);
       }
-      for (auto* listener : adaptation_listeners_) {
-        resource_adaptation_processor_->RemoveAdaptationListener(listener);
+      for (auto* listener : stream_resource_manager_.AdaptationListeners()) {
+        video_stream_adapter_->RemoveAdaptationListener(listener);
       }
       video_stream_adapter_->RemoveRestrictionsListener(this);
       video_stream_adapter_->RemoveRestrictionsListener(
@@ -413,8 +435,7 @@ void VideoStreamEncoder::Stop() {
       resource_adaptation_processor_->RemoveResourceLimitationsListener(
           &stream_resource_manager_);
       stream_resource_manager_.SetAdaptationProcessor(nullptr, nullptr);
-      degradation_preference_manager_->RemoveListener(
-          resource_adaptation_processor_.get());
+      degradation_preference_manager_->SetVideoStreamAdapter(nullptr);
       resource_adaptation_processor_.reset();
     }
     shutdown_adaptation_processor_event.Set();
@@ -463,41 +484,15 @@ void VideoStreamEncoder::AddAdaptationResource(
     RTC_DCHECK_RUN_ON(&encoder_queue_);
     stream_resource_manager_.MapResourceToReason(resource,
                                                  VideoAdaptationReason::kCpu);
+    resource_adaptation_processor_->AddResource(resource);
     map_resource_event.Set();
   });
   map_resource_event.Wait(rtc::Event::kForever);
-
-  // Add the resource to the processor.
-  rtc::Event add_resource_event;
-  resource_adaptation_queue_.PostTask([this, resource, &add_resource_event] {
-    RTC_DCHECK_RUN_ON(&resource_adaptation_queue_);
-    if (!resource_adaptation_processor_) {
-      // The VideoStreamEncoder was stopped and the processor destroyed before
-      // this task had a chance to execute. No action needed.
-      return;
-    }
-    resource_adaptation_processor_->AddResource(resource);
-    add_resource_event.Set();
-  });
-  add_resource_event.Wait(rtc::Event::kForever);
 }
 
 std::vector<rtc::scoped_refptr<Resource>>
 VideoStreamEncoder::GetAdaptationResources() {
-  std::vector<rtc::scoped_refptr<Resource>> resources;
-  rtc::Event event;
-  resource_adaptation_queue_.PostTask([this, &resources, &event] {
-    RTC_DCHECK_RUN_ON(&resource_adaptation_queue_);
-    if (!resource_adaptation_processor_) {
-      // The VideoStreamEncoder was stopped and the processor destroyed before
-      // this task had a chance to execute. No action needed.
-      return;
-    }
-    resources = resource_adaptation_processor_->GetResources();
-    event.Set();
-  });
-  event.Wait(rtc::Event::kForever);
-  return resources;
+  return resource_adaptation_processor_->GetResources();
 }
 
 void VideoStreamEncoder::SetSource(
@@ -2099,22 +2094,10 @@ void VideoStreamEncoder::InjectAdaptationResource(
   encoder_queue_.PostTask([this, resource, reason, &map_resource_event] {
     RTC_DCHECK_RUN_ON(&encoder_queue_);
     stream_resource_manager_.MapResourceToReason(resource, reason);
+    resource_adaptation_processor_->AddResource(resource);
     map_resource_event.Set();
   });
   map_resource_event.Wait(rtc::Event::kForever);
-
-  rtc::Event add_resource_event;
-  resource_adaptation_queue_.PostTask([this, resource, &add_resource_event] {
-    RTC_DCHECK_RUN_ON(&resource_adaptation_queue_);
-    if (!resource_adaptation_processor_) {
-      // The VideoStreamEncoder was stopped and the processor destroyed before
-      // this task had a chance to execute. No action needed.
-      return;
-    }
-    resource_adaptation_processor_->AddResource(resource);
-    add_resource_event.Set();
-  });
-  add_resource_event.Wait(rtc::Event::kForever);
 }
 
 void VideoStreamEncoder::InjectAdaptationConstraint(
@@ -2128,25 +2111,7 @@ void VideoStreamEncoder::InjectAdaptationConstraint(
       return;
     }
     adaptation_constraints_.push_back(adaptation_constraint);
-    resource_adaptation_processor_->AddAdaptationConstraint(
-        adaptation_constraint);
-    event.Set();
-  });
-  event.Wait(rtc::Event::kForever);
-}
-
-void VideoStreamEncoder::InjectAdaptationListener(
-    AdaptationListener* adaptation_listener) {
-  rtc::Event event;
-  resource_adaptation_queue_.PostTask([this, adaptation_listener, &event] {
-    RTC_DCHECK_RUN_ON(&resource_adaptation_queue_);
-    if (!resource_adaptation_processor_) {
-      // The VideoStreamEncoder was stopped and the processor destroyed before
-      // this task had a chance to execute. No action needed.
-      return;
-    }
-    adaptation_listeners_.push_back(adaptation_listener);
-    resource_adaptation_processor_->AddAdaptationListener(adaptation_listener);
+    video_stream_adapter_->AddAdaptationConstraint(adaptation_constraint);
     event.Set();
   });
   event.Wait(rtc::Event::kForever);

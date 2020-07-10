@@ -215,7 +215,7 @@ void AddPlanBRtpSenderOptions(
 
 // Add options to |session_options| from |rtp_data_channels|.
 void AddRtpDataChannelOptions(
-    const std::map<std::string, rtc::scoped_refptr<DataChannel>>&
+    const std::map<std::string, rtc::scoped_refptr<RtpDataChannel>>&
         rtp_data_channels,
     cricket::MediaDescriptionOptions* data_media_description_options) {
   if (!data_media_description_options) {
@@ -223,9 +223,9 @@ void AddRtpDataChannelOptions(
   }
   // Check for data channels.
   for (const auto& kv : rtp_data_channels) {
-    const DataChannel* channel = kv.second;
-    if (channel->state() == DataChannel::kConnecting ||
-        channel->state() == DataChannel::kOpen) {
+    const RtpDataChannel* channel = kv.second;
+    if (channel->state() == RtpDataChannel::kConnecting ||
+        channel->state() == RtpDataChannel::kOpen) {
       // Legacy RTP data channels are signaled with the track/stream ID set to
       // the data channel's label.
       data_media_description_options->AddRtpDataChannel(channel->label(),
@@ -2130,8 +2130,8 @@ rtc::scoped_refptr<DataChannelInterface> PeerConnection::CreateDataChannel(
   if (config) {
     internal_config.reset(new InternalDataChannelInit(*config));
   }
-  rtc::scoped_refptr<DataChannel> channel(
-      data_channel_controller_.InternalCreateDataChannel(
+  rtc::scoped_refptr<DataChannelInterface> channel(
+      data_channel_controller_.InternalCreateDataChannelWithProxy(
           label, internal_config.get()));
   if (!channel.get()) {
     return nullptr;
@@ -2143,7 +2143,7 @@ rtc::scoped_refptr<DataChannelInterface> PeerConnection::CreateDataChannel(
     UpdateNegotiationNeeded();
   }
   NoteUsageEvent(UsageEvent::DATA_ADDED);
-  return DataChannel::CreateProxy(std::move(channel));
+  return channel;
 }
 
 void PeerConnection::RestartIce() {
@@ -2731,7 +2731,7 @@ RTCError PeerConnection::ApplyLocalDescription(
   // If setting the description decided our SSL role, allocate any necessary
   // SCTP sids.
   rtc::SSLRole role;
-  if (DataChannel::IsSctpLike(data_channel_type()) && GetSctpSslRole(&role)) {
+  if (IsSctpLike(data_channel_type()) && GetSctpSslRole(&role)) {
     data_channel_controller_.AllocateSctpSids(role);
   }
 
@@ -3170,7 +3170,7 @@ RTCError PeerConnection::ApplyRemoteDescription(
   // If setting the description decided our SSL role, allocate any necessary
   // SCTP sids.
   rtc::SSLRole role;
-  if (DataChannel::IsSctpLike(data_channel_type()) && GetSctpSslRole(&role)) {
+  if (IsSctpLike(data_channel_type()) && GetSctpSslRole(&role)) {
     data_channel_controller_.AllocateSctpSids(role);
   }
 
@@ -4810,8 +4810,8 @@ void PeerConnection::GetOptionsForPlanBOffer(
     const PeerConnectionInterface::RTCOfferAnswerOptions& offer_answer_options,
     cricket::MediaSessionOptions* session_options) {
   // Figure out transceiver directional preferences.
-  bool send_audio = HasRtpSender(cricket::MEDIA_TYPE_AUDIO);
-  bool send_video = HasRtpSender(cricket::MEDIA_TYPE_VIDEO);
+  bool send_audio = !GetAudioTransceiver()->internal()->senders().empty();
+  bool send_video = !GetVideoTransceiver()->internal()->senders().empty();
 
   // By default, generate sendrecv/recvonly m= sections.
   bool recv_audio = true;
@@ -5112,8 +5112,8 @@ void PeerConnection::GetOptionsForPlanBAnswer(
     const PeerConnectionInterface::RTCOfferAnswerOptions& offer_answer_options,
     cricket::MediaSessionOptions* session_options) {
   // Figure out transceiver directional preferences.
-  bool send_audio = HasRtpSender(cricket::MEDIA_TYPE_AUDIO);
-  bool send_video = HasRtpSender(cricket::MEDIA_TYPE_VIDEO);
+  bool send_audio = !GetAudioTransceiver()->internal()->senders().empty();
+  bool send_video = !GetVideoTransceiver()->internal()->senders().empty();
 
   // By default, generate sendrecv/recvonly m= sections. The direction is also
   // restricted by the direction in the offer.
@@ -5541,10 +5541,11 @@ void PeerConnection::OnLocalSenderRemoved(const RtpSenderInfo& sender_info,
   sender->internal()->SetSsrc(0);
 }
 
-void PeerConnection::OnSctpDataChannelClosed(DataChannel* channel) {
+void PeerConnection::OnSctpDataChannelClosed(DataChannelInterface* channel) {
   // Since data_channel_controller doesn't do signals, this
   // signal is relayed here.
-  data_channel_controller_.OnSctpDataChannelClosed(channel);
+  data_channel_controller_.OnSctpDataChannelClosed(
+      static_cast<SctpDataChannel*>(channel));
 }
 
 rtc::scoped_refptr<RtpTransceiverProxyWithInternal<RtpTransceiver>>
@@ -5573,21 +5574,6 @@ PeerConnection::GetVideoTransceiver() const {
   }
   RTC_NOTREACHED();
   return nullptr;
-}
-
-// TODO(bugs.webrtc.org/7600): Remove this when multiple transceivers with
-// individual transceiver directions are supported.
-bool PeerConnection::HasRtpSender(cricket::MediaType type) const {
-  switch (type) {
-    case cricket::MEDIA_TYPE_AUDIO:
-      return !GetAudioTransceiver()->internal()->senders().empty();
-    case cricket::MEDIA_TYPE_VIDEO:
-      return !GetVideoTransceiver()->internal()->senders().empty();
-    case cricket::MEDIA_TYPE_DATA:
-      return false;
-  }
-  RTC_NOTREACHED();
-  return false;
 }
 
 rtc::scoped_refptr<RtpSenderProxyWithInternal<RtpSenderInternal>>
@@ -5656,7 +5642,7 @@ const PeerConnection::RtpSenderInfo* PeerConnection::FindSenderInfo(
   return nullptr;
 }
 
-DataChannel* PeerConnection::FindDataChannelBySid(int sid) const {
+SctpDataChannel* PeerConnection::FindDataChannelBySid(int sid) const {
   return data_channel_controller_.FindDataChannelBySid(sid);
 }
 
@@ -6045,7 +6031,7 @@ cricket::IceConfig PeerConnection::ParseIceConfig(
   return ice_config;
 }
 
-std::vector<DataChannel::Stats> PeerConnection::GetDataChannelStats() const {
+std::vector<DataChannelStats> PeerConnection::GetDataChannelStats() const {
   RTC_DCHECK_RUN_ON(signaling_thread());
   return data_channel_controller_.GetDataChannelStats();
 }
@@ -6557,6 +6543,7 @@ Call::Stats PeerConnection::GetCallStats() {
         RTC_FROM_HERE, rtc::Bind(&PeerConnection::GetCallStats, this));
   }
   RTC_DCHECK_RUN_ON(worker_thread());
+  rtc::Thread::ScopedDisallowBlockingCalls no_blocking_calls;
   if (call_) {
     return call_->GetStats();
   } else {

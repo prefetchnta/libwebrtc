@@ -51,36 +51,19 @@ class ResourceAdaptationProcessorInterface {
   virtual void SetResourceAdaptationQueue(
       TaskQueueBase* resource_adaptation_queue) = 0;
 
-  // Starts or stops listening to resources, effectively enabling or disabling
-  // processing.
-  // TODO(https://crbug.com/webrtc/11172): Automatically register and unregister
-  // with AddResource() and RemoveResource() instead. When the processor is
-  // multi-stream aware, stream-specific resouces will get added and removed
-  // over time.
   virtual void AddResourceLimitationsListener(
       ResourceLimitationsListener* limitations_listener) = 0;
   virtual void RemoveResourceLimitationsListener(
       ResourceLimitationsListener* limitations_listener) = 0;
+  // Starts or stops listening to resources, effectively enabling or disabling
+  // processing. May be called from anywhere.
+  // TODO(https://crbug.com/webrtc/11172): Automatically register and unregister
+  // with AddResource() and RemoveResource() instead. When the processor is
+  // multi-stream aware, stream-specific resouces will get added and removed
+  // over time.
   virtual void AddResource(rtc::scoped_refptr<Resource> resource) = 0;
   virtual std::vector<rtc::scoped_refptr<Resource>> GetResources() const = 0;
   virtual void RemoveResource(rtc::scoped_refptr<Resource> resource) = 0;
-  virtual void AddAdaptationConstraint(
-      AdaptationConstraint* adaptation_constraint) = 0;
-  virtual void RemoveAdaptationConstraint(
-      AdaptationConstraint* adaptation_constraint) = 0;
-  virtual void AddAdaptationListener(
-      AdaptationListener* adaptation_listener) = 0;
-  virtual void RemoveAdaptationListener(
-      AdaptationListener* adaptation_listener) = 0;
-
-  // May trigger one or more adaptations. It is meant to reduce resolution -
-  // useful if a frame was dropped due to its size - however, the implementation
-  // may not guarantee this (see resource_adaptation_processor.h).
-  // TODO(hbos): This is only part of the interface for backwards-compatiblity
-  // reasons. Can we replace this by something which actually satisfies the
-  // resolution constraints or get rid of it altogether?
-  virtual void TriggerAdaptationDueToFrameDroppedDueToSize(
-      rtc::scoped_refptr<Resource> reason_resource) = 0;
 };
 
 }  // namespace webrtc

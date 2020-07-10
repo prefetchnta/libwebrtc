@@ -14,15 +14,14 @@
 #include "api/scoped_refptr.h"
 #include "api/video/video_adaptation_counters.h"
 #include "call/adaptation/resource_adaptation_processor_interface.h"
-#include "call/adaptation/test/fake_adaptation_constraint.h"
 #include "call/adaptation/test/fake_adaptation_listener.h"
 #include "call/adaptation/test/fake_frame_rate_provider.h"
 #include "call/adaptation/test/fake_resource.h"
 #include "call/adaptation/video_source_restrictions.h"
 #include "call/adaptation/video_stream_input_state_provider.h"
-#include "rtc_base/critical_section.h"
 #include "rtc_base/event.h"
 #include "rtc_base/gunit.h"
+#include "rtc_base/synchronization/mutex.h"
 #include "rtc_base/task_queue_for_test.h"
 #include "test/gtest.h"
 
@@ -90,7 +89,6 @@ class ResourceAdaptationProcessorTest : public ::testing::Test {
         input_state_provider_(&frame_rate_provider_),
         resource_(FakeResource::Create("FakeResource")),
         other_resource_(FakeResource::Create("OtherFakeResource")),
-        adaptation_constraint_("FakeAdaptationConstraint"),
         adaptation_listener_(),
         video_stream_adapter_(
             std::make_unique<VideoStreamAdapter>(&input_state_provider_)),
@@ -101,8 +99,7 @@ class ResourceAdaptationProcessorTest : public ::testing::Test {
     video_stream_adapter_->AddRestrictionsListener(&restrictions_listener_);
     processor_->AddResource(resource_);
     processor_->AddResource(other_resource_);
-    processor_->AddAdaptationConstraint(&adaptation_constraint_);
-    processor_->AddAdaptationListener(&adaptation_listener_);
+    video_stream_adapter_->AddAdaptationListener(&adaptation_listener_);
   }
   ~ResourceAdaptationProcessorTest() override {
     if (processor_) {
@@ -131,8 +128,7 @@ class ResourceAdaptationProcessorTest : public ::testing::Test {
     if (other_resource_) {
       processor_->RemoveResource(other_resource_);
     }
-    processor_->RemoveAdaptationConstraint(&adaptation_constraint_);
-    processor_->RemoveAdaptationListener(&adaptation_listener_);
+    video_stream_adapter_->RemoveAdaptationListener(&adaptation_listener_);
     video_stream_adapter_->RemoveRestrictionsListener(&restrictions_listener_);
     processor_.reset();
   }
@@ -146,7 +142,6 @@ class ResourceAdaptationProcessorTest : public ::testing::Test {
   VideoStreamInputStateProvider input_state_provider_;
   rtc::scoped_refptr<FakeResource> resource_;
   rtc::scoped_refptr<FakeResource> other_resource_;
-  FakeAdaptationConstraint adaptation_constraint_;
   FakeAdaptationListener adaptation_listener_;
   std::unique_ptr<VideoStreamAdapter> video_stream_adapter_;
   std::unique_ptr<ResourceAdaptationProcessor> processor_;
@@ -163,7 +158,7 @@ TEST_F(ResourceAdaptationProcessorTest, DisabledByDefault) {
 }
 
 TEST_F(ResourceAdaptationProcessorTest, InsufficientInput) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   // Adaptation does not happen if input is insufficient.
   // When frame size is missing (OnFrameSizeObserved not called yet).
@@ -183,7 +178,7 @@ TEST_F(ResourceAdaptationProcessorTest, InsufficientInput) {
 // restrictions. For that, see video_stream_adapter_unittest.cc.
 TEST_F(ResourceAdaptationProcessorTest,
        OveruseTriggersRestrictingResolutionInMaintainFrameRate) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
   resource_->SetUsageState(ResourceUsageState::kOveruse);
@@ -194,7 +189,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 
 TEST_F(ResourceAdaptationProcessorTest,
        OveruseTriggersRestrictingFrameRateInMaintainResolution) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_RESOLUTION);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
   resource_->SetUsageState(ResourceUsageState::kOveruse);
@@ -205,7 +200,8 @@ TEST_F(ResourceAdaptationProcessorTest,
 
 TEST_F(ResourceAdaptationProcessorTest,
        OveruseTriggersRestrictingFrameRateAndResolutionInBalanced) {
-  processor_->OnDegradationPreferenceUpdated(DegradationPreference::BALANCED);
+  video_stream_adapter_->SetDegradationPreference(
+      DegradationPreference::BALANCED);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
   // Adapting multiple times eventually resticts both frame rate and
   // resolution. Exactly many times we need to adapt depends on
@@ -223,7 +219,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 }
 
 TEST_F(ResourceAdaptationProcessorTest, AwaitingPreviousAdaptation) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
   resource_->SetUsageState(ResourceUsageState::kOveruse);
@@ -235,7 +231,7 @@ TEST_F(ResourceAdaptationProcessorTest, AwaitingPreviousAdaptation) {
 }
 
 TEST_F(ResourceAdaptationProcessorTest, CannotAdaptUpWhenUnrestricted) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
   resource_->SetUsageState(ResourceUsageState::kUnderuse);
@@ -243,7 +239,7 @@ TEST_F(ResourceAdaptationProcessorTest, CannotAdaptUpWhenUnrestricted) {
 }
 
 TEST_F(ResourceAdaptationProcessorTest, UnderuseTakesUsBackToUnrestricted) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
   resource_->SetUsageState(ResourceUsageState::kOveruse);
@@ -254,23 +250,9 @@ TEST_F(ResourceAdaptationProcessorTest, UnderuseTakesUsBackToUnrestricted) {
   EXPECT_EQ(VideoSourceRestrictions(), restrictions_listener_.restrictions());
 }
 
-TEST_F(ResourceAdaptationProcessorTest, ResourcesCanPreventAdaptingUp) {
-  processor_->OnDegradationPreferenceUpdated(
-      DegradationPreference::MAINTAIN_FRAMERATE);
-  SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
-  // Adapt down so that we can adapt up.
-  resource_->SetUsageState(ResourceUsageState::kOveruse);
-  EXPECT_EQ(1u, restrictions_listener_.restrictions_updated_count());
-  RestrictSource(restrictions_listener_.restrictions());
-  // Adapting up is prevented.
-  adaptation_constraint_.set_is_adaptation_up_allowed(false);
-  resource_->SetUsageState(ResourceUsageState::kUnderuse);
-  EXPECT_EQ(1u, restrictions_listener_.restrictions_updated_count());
-}
-
 TEST_F(ResourceAdaptationProcessorTest,
        ResourcesCanNotAdaptUpIfNeverAdaptedDown) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
   resource_->SetUsageState(ResourceUsageState::kOveruse);
@@ -284,7 +266,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 
 TEST_F(ResourceAdaptationProcessorTest,
        ResourcesCanNotAdaptUpIfNotAdaptedDownAfterReset) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
   resource_->SetUsageState(ResourceUsageState::kOveruse);
@@ -303,7 +285,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 }
 
 TEST_F(ResourceAdaptationProcessorTest, OnlyMostLimitedResourceMayAdaptUp) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
   resource_->SetUsageState(ResourceUsageState::kOveruse);
@@ -333,7 +315,7 @@ TEST_F(ResourceAdaptationProcessorTest, OnlyMostLimitedResourceMayAdaptUp) {
 
 TEST_F(ResourceAdaptationProcessorTest,
        MultipleResourcesCanTriggerMultipleAdaptations) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
   resource_->SetUsageState(ResourceUsageState::kOveruse);
@@ -391,7 +373,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 
 TEST_F(ResourceAdaptationProcessorTest,
        MostLimitedResourceAdaptationWorksAfterChangingDegradataionPreference) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
   // Adapt down until we can't anymore.
@@ -407,7 +389,7 @@ TEST_F(ResourceAdaptationProcessorTest,
   RestrictSource(restrictions_listener_.restrictions());
   int last_total = restrictions_listener_.adaptation_counters().Total();
 
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_RESOLUTION);
   // resource_ can not adapt up since we have never reduced FPS.
   resource_->SetUsageState(ResourceUsageState::kUnderuse);
@@ -423,7 +405,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 }
 
 TEST_F(ResourceAdaptationProcessorTest, AdaptingTriggersOnAdaptationApplied) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
   resource_->SetUsageState(ResourceUsageState::kOveruse);
@@ -432,7 +414,7 @@ TEST_F(ResourceAdaptationProcessorTest, AdaptingTriggersOnAdaptationApplied) {
 
 TEST_F(ResourceAdaptationProcessorTest,
        AdaptsDownWhenOtherResourceIsAlwaysUnderused) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
   other_resource_->SetUsageState(ResourceUsageState::kUnderuse);
@@ -453,7 +435,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 
 TEST_F(ResourceAdaptationProcessorTest,
        TriggerOveruseNotOnAdaptationTaskQueue) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
 
@@ -467,7 +449,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 
 TEST_F(ResourceAdaptationProcessorTest,
        DestroyProcessorWhileResourceListenerDelegateHasTaskInFlight) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
 
@@ -491,7 +473,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 
 TEST_F(ResourceAdaptationProcessorTest,
        ResourceOveruseIgnoredWhenSignalledDuringRemoval) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
 
@@ -520,7 +502,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 
 TEST_F(ResourceAdaptationProcessorTest,
        RemovingOnlyAdaptedResourceResetsAdaptation) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
 
@@ -537,7 +519,8 @@ TEST_F(ResourceAdaptationProcessorTest,
 
 TEST_F(ResourceAdaptationProcessorTest,
        RemovingMostLimitedResourceSetsAdaptationToNextLimitedLevel) {
-  processor_->OnDegradationPreferenceUpdated(DegradationPreference::BALANCED);
+  video_stream_adapter_->SetDegradationPreference(
+      DegradationPreference::BALANCED);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
 
   other_resource_->SetUsageState(ResourceUsageState::kOveruse);
@@ -565,7 +548,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 
 TEST_F(ResourceAdaptationProcessorTest,
        RemovingMostLimitedResourceSetsAdaptationIfInputStateUnchanged) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
 
@@ -602,7 +585,8 @@ TEST_F(ResourceAdaptationProcessorTest,
 
 TEST_F(ResourceAdaptationProcessorTest,
        RemovingResourceNotMostLimitedHasNoEffectOnLimitations) {
-  processor_->OnDegradationPreferenceUpdated(DegradationPreference::BALANCED);
+  video_stream_adapter_->SetDegradationPreference(
+      DegradationPreference::BALANCED);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
 
   other_resource_->SetUsageState(ResourceUsageState::kOveruse);
@@ -628,7 +612,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 
 TEST_F(ResourceAdaptationProcessorTest,
        RemovingMostLimitedResourceAfterSwitchingDegradationPreferences) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
 
@@ -640,7 +624,7 @@ TEST_F(ResourceAdaptationProcessorTest,
   VideoAdaptationCounters next_limited_counters =
       restrictions_listener_.adaptation_counters();
 
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_RESOLUTION);
   resource_->SetUsageState(ResourceUsageState::kOveruse);
   RestrictSource(restrictions_listener_.restrictions());
@@ -654,7 +638,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 
   // After switching back to MAINTAIN_FRAMERATE, the next most limited settings
   // are restored.
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   EXPECT_EQ(next_limited_restrictions, restrictions_listener_.restrictions());
 
@@ -664,7 +648,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 
 TEST_F(ResourceAdaptationProcessorTest,
        RemovingMostLimitedResourceSetsNextLimitationsInDisabled) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
 
@@ -679,7 +663,8 @@ TEST_F(ResourceAdaptationProcessorTest,
   RestrictSource(restrictions_listener_.restrictions());
   EXPECT_EQ(2, restrictions_listener_.adaptation_counters().Total());
 
-  processor_->OnDegradationPreferenceUpdated(DegradationPreference::DISABLED);
+  video_stream_adapter_->SetDegradationPreference(
+      DegradationPreference::DISABLED);
 
   // Revert to |other_resource_| when removing |resource_| even though the
   // current degradataion preference is disabled.
@@ -687,7 +672,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 
   // After switching back to MAINTAIN_FRAMERATE, the next most limited settings
   // are restored.
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   EXPECT_EQ(next_limited_restrictions, restrictions_listener_.restrictions());
   EXPECT_EQ(next_limited_counters,
@@ -699,7 +684,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 
 TEST_F(ResourceAdaptationProcessorTest,
        RemovedResourceSignalsIgnoredByProcessor) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
 
@@ -713,7 +698,7 @@ TEST_F(ResourceAdaptationProcessorTest,
 
 TEST_F(ResourceAdaptationProcessorTest,
        RemovingResourceWhenMultipleMostLimtedHasNoEffect) {
-  processor_->OnDegradationPreferenceUpdated(
+  video_stream_adapter_->SetDegradationPreference(
       DegradationPreference::MAINTAIN_FRAMERATE);
   SetInputStates(true, kDefaultFrameRate, kDefaultFrameSize);
 

@@ -18,8 +18,8 @@
 #include "api/test/audio_quality_analyzer_interface.h"
 #include "api/test/track_id_stream_info_map.h"
 #include "api/units/time_delta.h"
-#include "rtc_base/critical_section.h"
 #include "rtc_base/numerics/samples_stats_counter.h"
+#include "rtc_base/synchronization/mutex.h"
 #include "test/testsupport/perf_test.h"
 
 namespace webrtc {
@@ -30,6 +30,7 @@ struct AudioStreamStats {
   SamplesStatsCounter accelerate_rate;
   SamplesStatsCounter preemptive_rate;
   SamplesStatsCounter speech_expand_rate;
+  SamplesStatsCounter average_jitter_buffer_delay_ms;
   SamplesStatsCounter preferred_buffer_size_ms;
 };
 
@@ -52,6 +53,7 @@ class DefaultAudioQualityAnalyzer : public AudioQualityAnalyzerInterface {
     uint64_t removed_samples_for_acceleration = 0;
     uint64_t inserted_samples_for_deceleration = 0;
     uint64_t silent_concealed_samples = 0;
+    TimeDelta jitter_buffer_delay = TimeDelta::Zero();
     TimeDelta jitter_buffer_target_delay = TimeDelta::Zero();
     uint64_t jitter_buffer_emitted_count = 0;
   };
@@ -66,7 +68,7 @@ class DefaultAudioQualityAnalyzer : public AudioQualityAnalyzerInterface {
   std::string test_case_name_;
   TrackIdStreamInfoMap* analyzer_helper_;
 
-  rtc::CriticalSection lock_;
+  mutable Mutex lock_;
   std::map<std::string, AudioStreamStats> streams_stats_ RTC_GUARDED_BY(lock_);
   std::map<std::string, StatsSample> last_stats_sample_ RTC_GUARDED_BY(lock_);
 };

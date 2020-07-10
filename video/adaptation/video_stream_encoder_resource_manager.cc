@@ -173,8 +173,9 @@ bool VideoStreamEncoderResourceManager::BitrateConstraint::
       manager_->GetReasonFromResource(reason_resource);
   // If increasing resolution due to kQuality, make sure bitrate limits are not
   // violated.
-  // TODO(hbos): Why are we allowing violating bitrate constraints if adapting
-  // due to CPU? Shouldn't this condition be checked regardless of reason?
+  // TODO(https://crbug.com/webrtc/11771): Why are we allowing violating bitrate
+  // constraints if adapting due to CPU? Shouldn't this condition be checked
+  // regardless of reason?
   if (reason == VideoAdaptationReason::kQuality &&
       DidIncreaseResolution(restrictions_before, restrictions_after)) {
     uint32_t bitrate_bps = encoder_target_bitrate_bps_.value_or(0);
@@ -235,8 +236,9 @@ bool VideoStreamEncoderResourceManager::BalancedConstraint::
       manager_->GetReasonFromResource(reason_resource);
   // Don't adapt if BalancedDegradationSettings applies and determines this will
   // exceed bitrate constraints.
-  // TODO(hbos): Why are we allowing violating balanced settings if adapting due
-  // CPU? Shouldn't this condition be checked regardless of reason?
+  // TODO(https://crbug.com/webrtc/11771): Why are we allowing violating
+  // balanced settings if adapting due CPU? Shouldn't this condition be checked
+  // regardless of reason?
   if (reason == VideoAdaptationReason::kQuality &&
       degradation_preference_provider_->degradation_preference() ==
           DegradationPreference::BALANCED &&
@@ -354,7 +356,7 @@ void VideoStreamEncoderResourceManager::StopManagedResources() {
 void VideoStreamEncoderResourceManager::MapResourceToReason(
     rtc::scoped_refptr<Resource> resource,
     VideoAdaptationReason reason) {
-  rtc::CritScope crit(&resource_lock_);
+  MutexLock lock(&resource_lock_);
   RTC_DCHECK(resource);
   RTC_DCHECK(absl::c_find_if(resources_,
                              [resource](const ResourceAndReason& r) {
@@ -366,7 +368,7 @@ void VideoStreamEncoderResourceManager::MapResourceToReason(
 
 std::vector<rtc::scoped_refptr<Resource>>
 VideoStreamEncoderResourceManager::MappedResources() const {
-  rtc::CritScope crit(&resource_lock_);
+  MutexLock lock(&resource_lock_);
   std::vector<rtc::scoped_refptr<Resource>> resources;
   for (auto const& resource_and_reason : resources_) {
     resources.push_back(resource_and_reason.resource);
@@ -386,7 +388,7 @@ VideoStreamEncoderResourceManager::AdaptationListeners() const {
 
 rtc::scoped_refptr<QualityScalerResource>
 VideoStreamEncoderResourceManager::quality_scaler_resource_for_testing() {
-  rtc::CritScope crit(&resource_lock_);
+  MutexLock lock(&resource_lock_);
   return quality_scaler_resource_;
 }
 
@@ -445,8 +447,11 @@ void VideoStreamEncoderResourceManager::OnFrameDroppedDueToSize() {
       // happens if the processor is destroyed. No action needed.
       return;
     }
-    adaptation_processor_->TriggerAdaptationDueToFrameDroppedDueToSize(
-        quality_scaler_resource_);
+    Adaptation reduce_resolution = stream_adapter_->GetAdaptDownResolution();
+    if (reduce_resolution.status() == Adaptation::Status::kValid) {
+      stream_adapter_->ApplyAdaptation(reduce_resolution,
+                                       quality_scaler_resource_);
+    }
   });
   initial_frame_dropper_->OnFrameDroppedDueToSize();
 }
@@ -556,7 +561,7 @@ void VideoStreamEncoderResourceManager::ConfigureQualityScaler(
 
 VideoAdaptationReason VideoStreamEncoderResourceManager::GetReasonFromResource(
     rtc::scoped_refptr<Resource> resource) const {
-  rtc::CritScope crit(&resource_lock_);
+  MutexLock lock(&resource_lock_);
   const auto& registered_resource =
       absl::c_find_if(resources_, [&resource](const ResourceAndReason& r) {
         return r.resource == resource;

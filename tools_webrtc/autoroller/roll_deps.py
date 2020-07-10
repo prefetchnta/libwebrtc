@@ -97,6 +97,10 @@ class RollError(Exception):
   pass
 
 
+def StrExpansion():
+  return lambda str_value: str_value
+
+
 def VarLookup(local_scope):
   return lambda var_name: local_scope['vars'][var_name]
 
@@ -104,6 +108,7 @@ def VarLookup(local_scope):
 def ParseDepsDict(deps_content):
   local_scope = {}
   global_scope = {
+    'Str': StrExpansion(),
     'Var': VarLookup(local_scope),
     'deps_os': {},
   }
@@ -708,7 +713,8 @@ def main():
     logging.info('Uploading CL...')
     if not opts.dry_run:
       _UploadCL(commit_queue_mode)
-  return 0
+
+  raise Exception('Test')
 
 
 if __name__ == '__main__':
