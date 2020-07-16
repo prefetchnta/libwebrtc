@@ -126,6 +126,10 @@ class MediaContentDescription {
 
   virtual int bandwidth() const { return bandwidth_; }
   virtual void set_bandwidth(int bandwidth) { bandwidth_ = bandwidth; }
+  virtual std::string bandwidth_type() const { return bandwidth_type_; }
+  virtual void set_bandwidth_type(std::string bandwidth_type) {
+    bandwidth_type_ = bandwidth_type;
+  }
 
   virtual const std::vector<CryptoParams>& cryptos() const { return cryptos_; }
   virtual void AddCrypto(const CryptoParams& params) {
@@ -145,13 +149,6 @@ class MediaContentDescription {
   }
   virtual void AddRtpHeaderExtension(const webrtc::RtpExtension& ext) {
     rtp_header_extensions_.push_back(ext);
-    rtp_header_extensions_set_ = true;
-  }
-  virtual void AddRtpHeaderExtension(const cricket::RtpHeaderExtension& ext) {
-    webrtc::RtpExtension webrtc_extension;
-    webrtc_extension.uri = ext.uri;
-    webrtc_extension.id = ext.id;
-    rtp_header_extensions_.push_back(webrtc_extension);
     rtp_header_extensions_set_ = true;
   }
   virtual void ClearRtpHeaderExtensions() {
@@ -258,6 +255,7 @@ class MediaContentDescription {
   bool rtcp_reduced_size_ = false;
   bool remote_estimate_ = false;
   int bandwidth_ = kAutoBandwidth;
+  std::string bandwidth_type_;
   std::string protocol_;
   std::vector<CryptoParams> cryptos_;
   std::vector<webrtc::RtpExtension> rtp_header_extensions_;
