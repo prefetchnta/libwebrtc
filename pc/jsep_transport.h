@@ -234,15 +234,6 @@ class JsepTransport : public sigslot::has_slots<> {
   // handle the signal and update the aggregate transport states.
   sigslot::signal<> SignalRtcpMuxActive;
 
-  // Signals that a data channel transport was negotiated and may be used to
-  // send data.  The first parameter is |this|.  The second parameter is the
-  // transport that was negotiated, or null if negotiation rejected the data
-  // channel transport.  The third parameter (bool) indicates whether the
-  // negotiation was provisional or final.  If true, it is provisional, if
-  // false, it is final.
-  sigslot::signal2<JsepTransport*, webrtc::DataChannelTransportInterface*>
-      SignalDataChannelTransportNegotiated;
-
   // TODO(deadbeef): The methods below are only public for testing. Should make
   // them utility functions or objects so they can be tested independently from
   // this class.
@@ -325,7 +316,7 @@ class JsepTransport : public sigslot::has_slots<> {
   const rtc::Thread* const network_thread_;
   // Critical scope for fields accessed off-thread
   // TODO(https://bugs.webrtc.org/10300): Stop doing this.
-  rtc::CriticalSection accessor_lock_;
+  rtc::RecursiveCriticalSection accessor_lock_;
   const std::string mid_;
   // needs-ice-restart bit as described in JSEP.
   bool needs_ice_restart_ RTC_GUARDED_BY(accessor_lock_) = false;
