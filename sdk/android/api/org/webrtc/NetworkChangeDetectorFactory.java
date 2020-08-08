@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2014 The WebRTC project authors. All Rights Reserved.
+ *  Copyright 2020 The WebRTC project authors. All Rights Reserved.
  *
  *  Use of this source code is governed by a BSD-style license
  *  that can be found in the LICENSE file in the root of the source
@@ -8,10 +8,10 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#ifndef COMMON_VIDEO_INCLUDE_VIDEO_FRAME_H_
-#define COMMON_VIDEO_INCLUDE_VIDEO_FRAME_H_
+package org.webrtc;
 
-// TODO(nisse): Delete this file, after downstream code is updated.
-#include "api/video/encoded_image.h"
+import android.content.Context;
 
-#endif  // COMMON_VIDEO_INCLUDE_VIDEO_FRAME_H_
+public interface NetworkChangeDetectorFactory {
+  public NetworkChangeDetector create(NetworkChangeDetector.Observer observer, Context context);
+}

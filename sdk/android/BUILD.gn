@@ -66,6 +66,7 @@ if (is_android) {
       ":native_api_base",
       ":native_api_codecs",
       ":native_api_jni",
+      ":native_api_network_monitor",
       ":native_api_peerconnection",
       ":native_api_stacktrace",
       ":native_api_video",
@@ -275,12 +276,13 @@ if (is_android) {
       "api/org/webrtc/NativeLibraryLoader.java",
       "api/org/webrtc/NativePeerConnectionFactory.java",
       "api/org/webrtc/NetEqFactoryFactory.java",
+      "api/org/webrtc/NetworkChangeDetector.java",
+      "api/org/webrtc/NetworkChangeDetectorFactory.java",
       "api/org/webrtc/NetworkControllerFactoryFactory.java",
-      "api/org/webrtc/NetworkMonitor.java",  # TODO(sakal): Break dependencies
-                                             # and move to base_java.
-      "api/org/webrtc/NetworkMonitorAutoDetect.java",  # TODO(sakal): Break
-                                                       # dependencies and move
-                                                       # to base_java.
+
+      # TODO(sakal): Break dependencies and move to base_java.
+      "api/org/webrtc/NetworkMonitor.java",
+      "api/org/webrtc/NetworkMonitorAutoDetect.java",
       "api/org/webrtc/NetworkStatePredictorFactoryFactory.java",
       "api/org/webrtc/PeerConnection.java",
       "api/org/webrtc/PeerConnectionDependencies.java",
@@ -327,6 +329,7 @@ if (is_android) {
     srcjar_deps = [
       "//api:priority_enums",
       "//api/video:video_frame_enums",
+      "//rtc_base:network_monitor_enums",
     ]
   }
 
@@ -846,13 +849,16 @@ if (current_os == "linux" || is_android) {
     sources = [
       "native_api/base/init.cc",
       "native_api/base/init.h",
-      "native_api/base/network_monitor.cc",
       "native_api/base/network_monitor.h",
     ]
 
     deps = [
       ":base_jni",
       ":native_api_jni",
+
+      # TODO(deadbeef): Remove this once clients start depending on
+      # native_network_monitor directly.
+      ":native_api_network_monitor",
       "//rtc_base",
       "//rtc_base:checks",
     ]
@@ -901,6 +907,19 @@ if (current_os == "linux" || is_android) {
       "//api/video_codecs:video_codecs_api",
       "//rtc_base:checks",
       "//rtc_base:rtc_base_approved",
+    ]
+  }
+
+  rtc_library("native_api_network_monitor") {
+    visibility = [ "*" ]
+    sources = [
+      "native_api/network_monitor/network_monitor.cc",
+      "native_api/network_monitor/network_monitor.h",
+    ]
+
+    deps = [
+      ":base_jni",
+      "//rtc_base",
     ]
   }
 
@@ -1154,8 +1173,8 @@ if (current_os == "linux" || is_android) {
 
   generate_jni("generated_base_jni") {
     sources = [
+      "api/org/webrtc/NetworkChangeDetector.java",
       "api/org/webrtc/NetworkMonitor.java",
-      "api/org/webrtc/NetworkMonitorAutoDetect.java",
       "api/org/webrtc/RefCounted.java",
       "src/java/org/webrtc/Histogram.java",
       "src/java/org/webrtc/JniCommon.java",
