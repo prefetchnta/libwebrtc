@@ -28,7 +28,6 @@
 #include "api/video_codecs/video_codec.h"
 #include "api/video_codecs/video_encoder.h"
 #include "call/adaptation/adaptation_constraint.h"
-#include "call/adaptation/adaptation_listener.h"
 #include "call/adaptation/resource_adaptation_processor.h"
 #include "call/adaptation/resource_adaptation_processor_interface.h"
 #include "call/adaptation/video_source_restrictions.h"
@@ -190,8 +189,7 @@ class VideoStreamEncoder : public VideoStreamEncoderInterface,
   // Implements EncodedImageCallback.
   EncodedImageCallback::Result OnEncodedImage(
       const EncodedImage& encoded_image,
-      const CodecSpecificInfo* codec_specific_info,
-      const RTPFragmentationHeader* fragmentation) override;
+      const CodecSpecificInfo* codec_specific_info) override;
 
   void OnDroppedFrame(EncodedImageCallback::DropReason reason) override;
 

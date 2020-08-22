@@ -45,7 +45,8 @@ class VCMDecoderDataBase {
   void RegisterExternalDecoder(VideoDecoder* external_decoder,
                                uint8_t payload_type);
 
-  bool RegisterReceiveCodec(const VideoCodec* receive_codec,
+  bool RegisterReceiveCodec(uint8_t payload_type,
+                            const VideoCodec* receive_codec,
                             int number_of_cores);
   bool DeregisterReceiveCodec(uint8_t payload_type);
 
@@ -75,6 +76,7 @@ class VCMDecoderDataBase {
   const VCMExtDecoderMapItem* FindExternalDecoderItem(
       uint8_t payload_type) const;
 
+  uint8_t current_payload_type_;  // Corresponding to receive_codec_.
   VideoCodec receive_codec_;
   std::unique_ptr<VCMGenericDecoder> ptr_decoder_;
   DecoderMap dec_map_;

@@ -54,8 +54,7 @@ class ResourceAdaptationProcessor : public ResourceAdaptationProcessorInterface,
                                     public VideoSourceRestrictionsListener,
                                     public ResourceListener {
  public:
-  ResourceAdaptationProcessor(
-      VideoStreamEncoderObserver* encoder_stats_observer,
+  explicit ResourceAdaptationProcessor(
       VideoStreamAdapter* video_stream_adapter);
   ~ResourceAdaptationProcessor() override;
 
@@ -147,8 +146,6 @@ class ResourceAdaptationProcessor : public ResourceAdaptationProcessorInterface,
   TaskQueueBase* resource_adaptation_queue_;
   rtc::scoped_refptr<ResourceListenerDelegate> resource_listener_delegate_;
   // Input and output.
-  VideoStreamEncoderObserver* const encoder_stats_observer_
-      RTC_GUARDED_BY(resource_adaptation_queue_);
   mutable Mutex resources_lock_;
   std::vector<rtc::scoped_refptr<Resource>> resources_
       RTC_GUARDED_BY(resources_lock_);
@@ -168,18 +165,6 @@ class ResourceAdaptationProcessor : public ResourceAdaptationProcessorInterface,
   // successful adaptation. Used to avoid RTC_LOG spam.
   std::map<Resource*, MitigationResult> previous_mitigation_results_
       RTC_GUARDED_BY(resource_adaptation_queue_);
-  // Prevents recursion.
-  //
-  // This is used to prevent triggering resource adaptation in the process of
-  // already handling resouce adaptation, since that could cause the same states
-  // to be modified in unexpected ways. Example:
-  //
-  // Resource::OnResourceUsageStateMeasured() ->
-  // ResourceAdaptationProcessor::OnResourceOveruse() ->
-  // Resource::OnAdaptationApplied() ->
-  // Resource::OnResourceUsageStateMeasured() ->
-  // ResourceAdaptationProcessor::OnResourceOveruse() // Boom, not allowed.
-  bool processing_in_progress_ RTC_GUARDED_BY(resource_adaptation_queue_);
 };
 
 }  // namespace webrtc

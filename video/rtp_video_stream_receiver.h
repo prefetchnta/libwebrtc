@@ -115,7 +115,8 @@ class RtpVideoStreamReceiver : public LossNotificationSender,
       rtc::scoped_refptr<FrameTransformerInterface> frame_transformer);
   ~RtpVideoStreamReceiver() override;
 
-  void AddReceiveCodec(const VideoCodec& video_codec,
+  void AddReceiveCodec(uint8_t payload_type,
+                       const VideoCodec& video_codec,
                        const std::map<std::string, std::string>& codec_params,
                        bool raw_payload);
 

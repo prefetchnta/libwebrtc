@@ -12,9 +12,6 @@
 #define RTC_BASE_NETWORK_MONITOR_H_
 
 #include "rtc_base/network_constants.h"
-// TODO(deadbeef): Remove this include when downstream code stops using
-// NetworkMonitorFactory::SetFactory.
-#include "rtc_base/network_monitor_factory.h"
 #include "rtc_base/third_party/sigslot/sigslot.h"
 #include "rtc_base/thread.h"
 
@@ -64,8 +61,7 @@ class NetworkBinderInterface {
  *
  * Memory consideration:
  * NetworkMonitor is owned by the caller (NetworkManager). The global network
- * monitor factory is owned by the factory itself but needs to be released from
- * the factory creator.
+ * monitor factory is owned by the PeerConnectionFactory.
  */
 // Generic network monitor interface. It starts and stops monitoring network
 // changes, and fires the SignalNetworksChanged event when networks change.
@@ -81,15 +77,34 @@ class NetworkMonitorInterface {
 
   // Implementations should call this method on the base when networks change,
   // and the base will fire SignalNetworksChanged on the right thread.
+  // TODO(deadbeef): This is an implementation detail of NetworkMonitorBase,
+  // it doesn't belong here.
   virtual void OnNetworksChanged() = 0;
 
   virtual AdapterType GetAdapterType(const std::string& interface_name) = 0;
   virtual AdapterType GetVpnUnderlyingAdapterType(
       const std::string& interface_name) = 0;
+
   virtual NetworkPreference GetNetworkPreference(
       const std::string& interface_name) = 0;
+
+  // Is this interface available to use? WebRTC shouldn't attempt to use it if
+  // this returns false.
+  //
+  // It's possible for this status to change, in which case
+  // SignalNetworksChanged will be fired.
+  //
+  // These specific use case this was added for was a phone with two SIM cards,
+  // where attempting to use all interfaces returned from getifaddrs caused the
+  // connection to be dropped.
+  virtual bool IsAdapterAvailable(const std::string& interface_name) {
+    return true;
+  }
 };
 
+// TODO(deadbeef): This class has marginal value, all it does is post a task
+// to call SignalNetworksChanged on the worker thread. Should fold it into
+// AndroidNetworkMonitor.
 class NetworkMonitorBase : public NetworkMonitorInterface,
                            public MessageHandler,
                            public sigslot::has_slots<> {

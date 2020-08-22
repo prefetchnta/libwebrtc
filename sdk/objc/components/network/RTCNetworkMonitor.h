@@ -8,10 +8,17 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "call/adaptation/adaptation_listener.h"
+#import <Foundation/Foundation.h>
 
-namespace webrtc {
+NS_ASSUME_NONNULL_BEGIN
 
-AdaptationListener::~AdaptationListener() {}
+/** Listens for NWPathMonitor updates and forwards the results to a C++
+ *  observer.
+ */
+@interface RTCNetworkMonitor : NSObject
 
-}  // namespace webrtc
+- (instancetype)init NS_UNAVAILABLE;
+
+@end
+
+NS_ASSUME_NONNULL_END

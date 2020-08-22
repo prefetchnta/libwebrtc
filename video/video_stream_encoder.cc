@@ -340,10 +340,10 @@ VideoStreamEncoder::VideoStreamEncoder(
       encoder_switch_requested_(false),
       input_state_provider_(encoder_stats_observer),
       video_stream_adapter_(
-          std::make_unique<VideoStreamAdapter>(&input_state_provider_)),
+          std::make_unique<VideoStreamAdapter>(&input_state_provider_,
+                                               encoder_stats_observer)),
       resource_adaptation_processor_(
           std::make_unique<ResourceAdaptationProcessor>(
-              encoder_stats_observer,
               video_stream_adapter_.get())),
       degradation_preference_manager_(
           std::make_unique<DegradationPreferenceManager>()),
@@ -392,9 +392,6 @@ VideoStreamEncoder::VideoStreamEncoder(
     for (auto* constraint : adaptation_constraints_) {
       video_stream_adapter_->AddAdaptationConstraint(constraint);
     }
-    for (auto* listener : stream_resource_manager_.AdaptationListeners()) {
-      video_stream_adapter_->AddAdaptationListener(listener);
-    }
     initialize_processor_event.Set();
   });
   initialize_processor_event.Wait(rtc::Event::kForever);
@@ -425,9 +422,6 @@ void VideoStreamEncoder::Stop() {
       // this queue.
       for (auto* constraint : adaptation_constraints_) {
         video_stream_adapter_->RemoveAdaptationConstraint(constraint);
-      }
-      for (auto* listener : stream_resource_manager_.AdaptationListeners()) {
-        video_stream_adapter_->RemoveAdaptationListener(listener);
       }
       video_stream_adapter_->RemoveRestrictionsListener(this);
       video_stream_adapter_->RemoveRestrictionsListener(
@@ -847,8 +841,7 @@ void VideoStreamEncoder::ReconfigureEncoder() {
     // We may be able to change this to "EnsureStarted()" if it took care of
     // reconfiguring the QualityScaler as well. (ConfigureQualityScaler() is
     // invoked later in this method.)
-    stream_resource_manager_.StopManagedResources();
-    stream_resource_manager_.StartEncodeUsageResource();
+    stream_resource_manager_.EnsureEncodeUsageResourceStarted();
     pending_encoder_creation_ = false;
   }
 
@@ -1538,8 +1531,7 @@ void VideoStreamEncoder::OnLossNotification(
 
 EncodedImageCallback::Result VideoStreamEncoder::OnEncodedImage(
     const EncodedImage& encoded_image,
-    const CodecSpecificInfo* codec_specific_info,
-    const RTPFragmentationHeader* /*fragmentation*/) {
+    const CodecSpecificInfo* codec_specific_info) {
   TRACE_EVENT_INSTANT1("webrtc", "VCMEncodedFrameCallback::Encoded",
                        "timestamp", encoded_image.Timestamp());
   const size_t spatial_idx = encoded_image.SpatialIndex().value_or(0);
@@ -1615,7 +1607,7 @@ EncodedImageCallback::Result VideoStreamEncoder::OnEncodedImage(
   }
 
   EncodedImageCallback::Result result =
-      sink_->OnEncodedImage(image_copy, codec_specific_info, nullptr);
+      sink_->OnEncodedImage(image_copy, codec_specific_info);
 
   // We are only interested in propagating the meta-data about the image, not
   // encoded data itself, to the post encode function. Since we cannot be sure

@@ -41,6 +41,8 @@
 #include "rtc_base/synchronization/mutex.h"
 #include "rtc_base/task_queue.h"
 #include "system_wrappers/include/clock.h"
+#include "video/adaptation/balanced_constraint.h"
+#include "video/adaptation/bitrate_constraint.h"
 #include "video/adaptation/encode_usage_resource.h"
 #include "video/adaptation/overuse_frame_detector.h"
 #include "video/adaptation/quality_rampup_experiment_helper.h"
@@ -89,9 +91,7 @@ class VideoStreamEncoderResourceManager
   void SetDegradationPreferences(DegradationPreference degradation_preference);
   DegradationPreference degradation_preference() const;
 
-  // Starts the encode usage resource. The quality scaler resource is
-  // automatically started on being configured.
-  void StartEncodeUsageResource();
+  void EnsureEncodeUsageResourceStarted();
   // Stops the encode usage and quality scaler resources if not already stopped.
   void StopManagedResources();
 
@@ -121,7 +121,6 @@ class VideoStreamEncoderResourceManager
                            VideoAdaptationReason reason);
   std::vector<rtc::scoped_refptr<Resource>> MappedResources() const;
   std::vector<AdaptationConstraint*> AdaptationConstraints() const;
-  std::vector<AdaptationListener*> AdaptationListeners() const;
   rtc::scoped_refptr<QualityScalerResource>
   quality_scaler_resource_for_testing();
   // If true, the VideoStreamEncoder should eexecute its logic to maybe drop
@@ -165,70 +164,6 @@ class VideoStreamEncoderResourceManager
   static std::string ActiveCountsToString(
       const std::map<VideoAdaptationReason, VideoAdaptationCounters>&
           active_counts);
-
-  // TODO(hbos): Add tests for manager's constraints.
-  // Does not trigger adaptations, only prevents adapting up resolution.
-  class BitrateConstraint : public rtc::RefCountInterface,
-                            public AdaptationConstraint {
-   public:
-    explicit BitrateConstraint(VideoStreamEncoderResourceManager* manager);
-    ~BitrateConstraint() override = default;
-
-    void SetAdaptationQueue(TaskQueueBase* resource_adaptation_queue);
-    void OnEncoderSettingsUpdated(
-        absl::optional<EncoderSettings> encoder_settings);
-    void OnEncoderTargetBitrateUpdated(
-        absl::optional<uint32_t> encoder_target_bitrate_bps);
-
-    // AdaptationConstraint implementation.
-    std::string Name() const override { return "BitrateConstraint"; }
-    bool IsAdaptationUpAllowed(
-        const VideoStreamInputState& input_state,
-        const VideoSourceRestrictions& restrictions_before,
-        const VideoSourceRestrictions& restrictions_after,
-        rtc::scoped_refptr<Resource> reason_resource) const override;
-
-   private:
-    // The |manager_| must be alive as long as this resource is added to the
-    // ResourceAdaptationProcessor, i.e. when IsAdaptationUpAllowed() is called.
-    VideoStreamEncoderResourceManager* const manager_;
-    TaskQueueBase* resource_adaptation_queue_;
-    absl::optional<EncoderSettings> encoder_settings_
-        RTC_GUARDED_BY(resource_adaptation_queue_);
-    absl::optional<uint32_t> encoder_target_bitrate_bps_
-        RTC_GUARDED_BY(resource_adaptation_queue_);
-  };
-
-  // Does not trigger adaptations, only prevents adapting up in BALANCED.
-  class BalancedConstraint : public rtc::RefCountInterface,
-                             public AdaptationConstraint {
-   public:
-    BalancedConstraint(
-        VideoStreamEncoderResourceManager* manager,
-        DegradationPreferenceProvider* degradation_preference_provider);
-    ~BalancedConstraint() override = default;
-
-    void SetAdaptationQueue(TaskQueueBase* resource_adaptation_queue);
-    void OnEncoderTargetBitrateUpdated(
-        absl::optional<uint32_t> encoder_target_bitrate_bps);
-
-    // AdaptationConstraint implementation.
-    std::string Name() const override { return "BalancedConstraint"; }
-    bool IsAdaptationUpAllowed(
-        const VideoStreamInputState& input_state,
-        const VideoSourceRestrictions& restrictions_before,
-        const VideoSourceRestrictions& restrictions_after,
-        rtc::scoped_refptr<Resource> reason_resource) const override;
-
-   private:
-    // The |manager_| must be alive as long as this resource is added to the
-    // ResourceAdaptationProcessor, i.e. when IsAdaptationUpAllowed() is called.
-    VideoStreamEncoderResourceManager* const manager_;
-    TaskQueueBase* resource_adaptation_queue_;
-    absl::optional<uint32_t> encoder_target_bitrate_bps_
-        RTC_GUARDED_BY(resource_adaptation_queue_);
-    DegradationPreferenceProvider* degradation_preference_provider_;
-  };
 
   DegradationPreferenceProvider* const degradation_preference_provider_;
   const rtc::scoped_refptr<BitrateConstraint> bitrate_constraint_;

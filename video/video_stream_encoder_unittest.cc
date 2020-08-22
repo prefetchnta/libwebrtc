@@ -27,7 +27,6 @@
 #include "api/video_codecs/vp8_temporal_layers.h"
 #include "api/video_codecs/vp8_temporal_layers_factory.h"
 #include "call/adaptation/test/fake_adaptation_constraint.h"
-#include "call/adaptation/test/fake_adaptation_listener.h"
 #include "call/adaptation/test/fake_resource.h"
 #include "common_video/h264/h264_common.h"
 #include "common_video/include/video_frame_buffer.h"
@@ -159,34 +158,6 @@ class CpuOveruseDetectorProxy : public OveruseFrameDetector {
   Mutex lock_;
   int last_target_framerate_fps_ RTC_GUARDED_BY(lock_);
   rtc::Event framerate_updated_event_;
-};
-
-class FakeQualityScalerQpUsageHandlerCallback
-    : public QualityScalerQpUsageHandlerCallbackInterface {
- public:
-  FakeQualityScalerQpUsageHandlerCallback()
-      : QualityScalerQpUsageHandlerCallbackInterface(),
-        qp_usage_handled_event_(/*manual_reset=*/true,
-                                /*initially_signaled=*/false),
-        clear_qp_samples_result_(absl::nullopt) {}
-  ~FakeQualityScalerQpUsageHandlerCallback() override {
-    RTC_DCHECK(clear_qp_samples_result_.has_value());
-  }
-
-  void OnQpUsageHandled(bool clear_qp_samples) override {
-    clear_qp_samples_result_ = clear_qp_samples;
-    qp_usage_handled_event_.Set();
-  }
-
-  bool WaitForQpUsageHandled() { return qp_usage_handled_event_.Wait(5000); }
-
-  absl::optional<bool> clear_qp_samples_result() const {
-    return clear_qp_samples_result_;
-  }
-
- private:
-  rtc::Event qp_usage_handled_event_;
-  absl::optional<bool> clear_qp_samples_result_;
 };
 
 class FakeVideoSourceRestrictionsListener
@@ -411,22 +382,6 @@ class VideoStreamEncoderUnderTest : public VideoStreamEncoder {
       event.Set();
     });
     ASSERT_TRUE(event.Wait(5000));
-  }
-
-  // Fakes high QP resource usage measurements on the real
-  // QualityScalerResource. Returns whether or not QP samples would have been
-  // cleared if this had been a real signal from the QualityScaler.
-  bool TriggerQualityScalerHighQpAndReturnIfQpSamplesShouldBeCleared() {
-    rtc::scoped_refptr<FakeQualityScalerQpUsageHandlerCallback> callback =
-        new FakeQualityScalerQpUsageHandlerCallback();
-    encoder_queue()->PostTask([this, callback] {
-      // This will cause a "ping" between adaptation task queue and encoder
-      // queue. When we have the result, the |callback| will be notified.
-      quality_scaler_resource_for_testing()->OnReportQpUsageHigh(callback);
-    });
-    EXPECT_TRUE(callback->WaitForQpUsageHandled());
-    EXPECT_TRUE(callback->clear_qp_samples_result().has_value());
-    return callback->clear_qp_samples_result().value();
   }
 
   CpuOveruseDetectorProxy* overuse_detector_proxy_;
@@ -941,7 +896,7 @@ class VideoStreamEncoderTest : public ::testing::Test {
 
     void InjectEncodedImage(const EncodedImage& image) {
       MutexLock lock(&local_mutex_);
-      encoded_image_callback_->OnEncodedImage(image, nullptr, nullptr);
+      encoded_image_callback_->OnEncodedImage(image, nullptr);
     }
 
     void SetEncodedImageData(
@@ -1004,25 +959,17 @@ class VideoStreamEncoderTest : public ::testing::Test {
       return result;
     }
 
-    std::unique_ptr<RTPFragmentationHeader> EncodeHook(
-        EncodedImage* encoded_image,
-        CodecSpecificInfo* codec_specific) override {
+    CodecSpecificInfo EncodeHook(EncodedImage& encoded_image) override {
+      CodecSpecificInfo codec_specific;
       {
         MutexLock lock(&mutex_);
-        codec_specific->codecType = config_.codecType;
+        codec_specific.codecType = config_.codecType;
       }
       MutexLock lock(&local_mutex_);
       if (encoded_image_data_) {
-        encoded_image->SetEncodedData(encoded_image_data_);
-        if (codec_specific->codecType == kVideoCodecH264) {
-          auto fragmentation = std::make_unique<RTPFragmentationHeader>();
-          fragmentation->VerifyAndAllocateFragmentationHeader(1);
-          fragmentation->fragmentationOffset[0] = 4;
-          fragmentation->fragmentationLength[0] = encoded_image->size() - 4;
-          return fragmentation;
-        }
+        encoded_image.SetEncodedData(encoded_image_data_);
       }
-      return nullptr;
+      return codec_specific;
     }
 
     int32_t InitEncode(const VideoCodec* config,
@@ -1220,8 +1167,7 @@ class VideoStreamEncoderTest : public ::testing::Test {
    private:
     Result OnEncodedImage(
         const EncodedImage& encoded_image,
-        const CodecSpecificInfo* codec_specific_info,
-        const RTPFragmentationHeader* /*fragmentation*/) override {
+        const CodecSpecificInfo* codec_specific_info) override {
       MutexLock lock(&mutex_);
       EXPECT_TRUE(expect_frames_);
       last_encoded_image_data_ = std::vector<uint8_t>(
@@ -3282,7 +3228,7 @@ class BalancedDegradationTest : public VideoStreamEncoderTest {
   AdaptingFrameForwarder source_;
 };
 
-TEST_F(BalancedDegradationTest, AdaptDownReturnsFalseIfFpsDiffLtThreshold) {
+TEST_F(BalancedDegradationTest, AdaptDownTwiceIfMinFpsDiffLtThreshold) {
   test::ScopedFieldTrials field_trials(
       "WebRTC-Video-BalancedDegradationSettings/"
       "pixels:57600|129600|230400,fps:7|10|24,fps_diff:1|1|1/");
@@ -3297,18 +3243,16 @@ TEST_F(BalancedDegradationTest, AdaptDownReturnsFalseIfFpsDiffLtThreshold) {
   InsertFrameAndWaitForEncoded();
   EXPECT_THAT(source_.sink_wants(), FpsMaxResolutionMax());
 
-  // Trigger adapt down, expect scaled down framerate (640x360@24fps).
-  // Fps diff (input-requested:0) < threshold, expect adapting down not to clear
-  // QP samples.
-  EXPECT_FALSE(
-      video_stream_encoder_
-          ->TriggerQualityScalerHighQpAndReturnIfQpSamplesShouldBeCleared());
-  EXPECT_THAT(source_.sink_wants(), FpsMatchesResolutionMax(Eq(24)));
+  // Trigger adapt down, expect scaled down framerate and resolution,
+  // since Fps diff (input-requested:0) < threshold.
+  video_stream_encoder_->TriggerQualityLow();
+  EXPECT_THAT(source_.sink_wants(),
+              AllOf(WantsFps(Eq(24)), WantsMaxPixels(Le(230400))));
 
   video_stream_encoder_->Stop();
 }
 
-TEST_F(BalancedDegradationTest, AdaptDownReturnsTrueIfFpsDiffGeThreshold) {
+TEST_F(BalancedDegradationTest, AdaptDownOnceIfFpsDiffGeThreshold) {
   test::ScopedFieldTrials field_trials(
       "WebRTC-Video-BalancedDegradationSettings/"
       "pixels:57600|129600|230400,fps:7|10|24,fps_diff:1|1|1/");
@@ -3323,12 +3267,9 @@ TEST_F(BalancedDegradationTest, AdaptDownReturnsTrueIfFpsDiffGeThreshold) {
   InsertFrameAndWaitForEncoded();
   EXPECT_THAT(source_.sink_wants(), FpsMaxResolutionMax());
 
-  // Trigger adapt down, expect scaled down framerate (640x360@24fps).
-  // Fps diff (input-requested:1) == threshold, expect adapting down to clear QP
-  // samples.
-  EXPECT_TRUE(
-      video_stream_encoder_
-          ->TriggerQualityScalerHighQpAndReturnIfQpSamplesShouldBeCleared());
+  // Trigger adapt down, expect scaled down framerate only (640x360@24fps).
+  // Fps diff (input-requested:1) == threshold.
+  video_stream_encoder_->TriggerQualityLow();
   EXPECT_THAT(source_.sink_wants(), FpsMatchesResolutionMax(Eq(24)));
 
   video_stream_encoder_->Stop();
@@ -4191,6 +4132,49 @@ TEST_F(VideoStreamEncoderTest, InitialFrameDropActivatesWhenBweDrops) {
   // Expect the sink_wants to specify a scaled frame.
   EXPECT_TRUE_WAIT(
       video_source_.sink_wants().max_pixel_count < kWidth * kHeight, 5000);
+  video_stream_encoder_->Stop();
+}
+
+TEST_F(VideoStreamEncoderTest,
+       InitialFrameDropNotReactivatedWhenBweDropsWhenScalingDisabled) {
+  webrtc::test::ScopedFieldTrials field_trials(
+      "WebRTC-Video-QualityScalerSettings/"
+      "initial_bitrate_interval_ms:1000,initial_bitrate_factor:0.2/");
+  fake_encoder_.SetQualityScaling(false);
+  ConfigureEncoder(video_encoder_config_.Copy());
+  const int kNotTooLowBitrateForFrameSizeBps = kTargetBitrateBps * 0.2;
+  const int kTooLowBitrateForFrameSizeBps = kTargetBitrateBps * 0.19;
+  const int kWidth = 640;
+  const int kHeight = 360;
+
+  video_stream_encoder_->OnBitrateUpdatedAndWaitForManagedResources(
+      DataRate::BitsPerSec(kTargetBitrateBps),
+      DataRate::BitsPerSec(kTargetBitrateBps),
+      DataRate::BitsPerSec(kTargetBitrateBps), 0, 0, 0);
+  video_source_.IncomingCapturedFrame(CreateFrame(1, kWidth, kHeight));
+  // Frame should not be dropped.
+  WaitForEncodedFrame(1);
+
+  video_stream_encoder_->OnBitrateUpdatedAndWaitForManagedResources(
+      DataRate::BitsPerSec(kNotTooLowBitrateForFrameSizeBps),
+      DataRate::BitsPerSec(kNotTooLowBitrateForFrameSizeBps),
+      DataRate::BitsPerSec(kNotTooLowBitrateForFrameSizeBps), 0, 0, 0);
+  video_source_.IncomingCapturedFrame(CreateFrame(2, kWidth, kHeight));
+  // Frame should not be dropped.
+  WaitForEncodedFrame(2);
+
+  video_stream_encoder_->OnBitrateUpdatedAndWaitForManagedResources(
+      DataRate::BitsPerSec(kTooLowBitrateForFrameSizeBps),
+      DataRate::BitsPerSec(kTooLowBitrateForFrameSizeBps),
+      DataRate::BitsPerSec(kTooLowBitrateForFrameSizeBps), 0, 0, 0);
+  video_source_.IncomingCapturedFrame(CreateFrame(3, kWidth, kHeight));
+  // Not dropped since quality scaling is disabled.
+  WaitForEncodedFrame(3);
+
+  // Expect the sink_wants to specify a scaled frame.
+  video_stream_encoder_->WaitUntilAdaptationTaskQueueIsIdle();
+  EXPECT_THAT(video_source_.sink_wants(), ResolutionMax());
+
   video_stream_encoder_->Stop();
 }
 
