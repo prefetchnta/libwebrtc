@@ -65,6 +65,12 @@ rtc_library("common_video") {
   absl_deps = [ "//third_party/abseil-cpp/absl/types:optional" ]
 }
 
+rtc_source_set("frame_counts") {
+  visibility = [ "*" ]
+
+  sources = [ "frame_counts.h" ]
+}
+
 if (rtc_include_tests) {
   common_video_resources = [ "../resources/foreman_cif.yuv" ]
 
@@ -94,7 +100,6 @@ if (rtc_include_tests) {
 
     deps = [
       ":common_video",
-      "../:webrtc_common",
       "../api:scoped_refptr",
       "../api/units:time_delta",
       "../api/video:video_frame",

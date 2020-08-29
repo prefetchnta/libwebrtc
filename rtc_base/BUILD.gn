@@ -461,6 +461,7 @@ rtc_source_set("rtc_operations_chain") {
     "../api:scoped_refptr",
     "synchronization:sequence_checker",
   ]
+  absl_deps = [ "//third_party/abseil-cpp/absl/types:optional" ]
 }
 
 if (rtc_enable_libevent) {
@@ -1275,6 +1276,7 @@ if (rtc_include_tests) {
 
     sources = [ "operations_chain_unittest.cc" ]
     deps = [
+      ":gunit_helpers",
       ":rtc_base",
       ":rtc_base_approved",
       ":rtc_event",
