@@ -936,6 +936,10 @@ class PeerConnection : public PeerConnectionInternal,
   RTCError UpdateSessionState(SdpType type,
                               cricket::ContentSource source,
                               const cricket::SessionDescription* description);
+  // Based on number of transceivers per media type, enabled or disable
+  // payload type based demuxing in the affected channels.
+  void UpdatePayloadTypeDemuxingState(cricket::ContentSource source)
+      RTC_RUN_ON(signaling_thread());
   // Push the media parts of the local or remote session description
   // down to all of the channels.
   RTCError PushdownMediaDescription(SdpType type, cricket::ContentSource source)
@@ -1184,10 +1188,10 @@ class PeerConnection : public PeerConnectionInternal,
   // is not injected. It should be required once chromium supplies it.
   std::unique_ptr<AsyncResolverFactory> async_resolver_factory_
       RTC_GUARDED_BY(signaling_thread());
+  std::unique_ptr<rtc::PacketSocketFactory> packet_socket_factory_;
   std::unique_ptr<cricket::PortAllocator>
       port_allocator_;  // TODO(bugs.webrtc.org/9987): Accessed on both
                         // signaling and network thread.
-  std::unique_ptr<rtc::PacketSocketFactory> packet_socket_factory_;
   std::unique_ptr<webrtc::IceTransportFactory>
       ice_transport_factory_;  // TODO(bugs.webrtc.org/9987): Accessed on the
                                // signaling thread but the underlying raw
@@ -1274,9 +1278,6 @@ class PeerConnection : public PeerConnectionInternal,
   std::unique_ptr<JsepTransportController>
       transport_controller_;  // TODO(bugs.webrtc.org/9987): Accessed on both
                               // signaling and network thread.
-  std::unique_ptr<cricket::SctpTransportInternalFactory>
-      sctp_factory_;  // TODO(bugs.webrtc.org/9987): Accessed on both
-                      // signaling and network thread.
 
   // |sctp_mid_| is the content name (MID) in SDP.
   // Note: this is used as the data channel MID by both SCTP and data channel
