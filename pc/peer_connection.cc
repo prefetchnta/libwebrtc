@@ -1027,7 +1027,8 @@ void ExtractSharedMediaSessionOptions(
 PeerConnection::PeerConnection(PeerConnectionFactory* factory,
                                std::unique_ptr<RtcEventLog> event_log,
                                std::unique_ptr<Call> call)
-    : factory_(factory),
+    : MessageHandler(false),
+      factory_(factory),
       event_log_(std::move(event_log)),
       event_log_ptr_(event_log_.get()),
       operations_chain_(rtc::OperationsChain::Create()),
@@ -7665,7 +7666,7 @@ void PeerConnection::GenerateNegotiationNeededEvent() {
   Observer()->OnNegotiationNeededEvent(negotiation_needed_event_id_);
 }
 
-RTCError PeerConnection::Rollback(SdpType sdp_type) {
+RTCError PeerConnection::Rollback(SdpType desc_type) {
   auto state = signaling_state();
   if (state != PeerConnectionInterface::kHaveLocalOffer &&
       state != PeerConnectionInterface::kHaveRemoteOffer) {
@@ -7748,7 +7749,7 @@ RTCError PeerConnection::Rollback(SdpType sdp_type) {
 
   // The assumption is that in case of implicit rollback UpdateNegotiationNeeded
   // gets called in SetRemoteDescription.
-  if (sdp_type == SdpType::kRollback) {
+  if (desc_type == SdpType::kRollback) {
     UpdateNegotiationNeeded();
     if (is_negotiation_needed_) {
       // Legacy version.
