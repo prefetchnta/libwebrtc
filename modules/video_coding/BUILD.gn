@@ -759,6 +759,7 @@ if (rtc_include_tests) {
       "../../api:array_view",
       "../../api:videocodec_test_fixture_api",
       "../../api/test/video:function_video_factory",
+      "../../api/transport:field_trial_based_config",
       "../../api/video:video_bitrate_allocation",
       "../../api/video_codecs:video_codecs_api",
       "../../call:video_stream_api",
@@ -789,6 +790,7 @@ if (rtc_include_tests) {
     ]
     deps = [
       "../../api:videocodec_test_fixture_api",
+      "../../api/numerics",
       "../../rtc_base:checks",
       "../../rtc_base:rtc_numerics",
       "../../rtc_base:stringutils",

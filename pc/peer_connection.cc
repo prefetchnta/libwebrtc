@@ -58,7 +58,6 @@
 #include "rtc_base/strings/string_builder.h"
 #include "rtc_base/trace_event.h"
 #include "system_wrappers/include/clock.h"
-#include "system_wrappers/include/field_trial.h"
 #include "system_wrappers/include/metrics.h"
 
 using cricket::ContentInfo;
@@ -1027,8 +1026,7 @@ void ExtractSharedMediaSessionOptions(
 PeerConnection::PeerConnection(PeerConnectionFactory* factory,
                                std::unique_ptr<RtcEventLog> event_log,
                                std::unique_ptr<Call> call)
-    : MessageHandler(false),
-      factory_(factory),
+    : factory_(factory),
       event_log_(std::move(event_log)),
       event_log_ptr_(event_log_.get()),
       operations_chain_(rtc::OperationsChain::Create()),
@@ -1988,13 +1986,7 @@ PeerConnection::GetTransceivers() const {
       << "GetTransceivers is only supported with Unified Plan SdpSemantics.";
   std::vector<rtc::scoped_refptr<RtpTransceiverInterface>> all_transceivers;
   for (const auto& transceiver : transceivers_) {
-    // Temporary fix: Do not show stopped transceivers.
-    // The long term fix is to remove them from transceivers_, but this
-    // turns out to cause issues with audio channel lifetimes.
-    // TODO(https://crbug.com/webrtc/11840): Fix issue.
-    if (!transceiver->stopped()) {
-      all_transceivers.push_back(transceiver);
-    }
+    all_transceivers.push_back(transceiver);
   }
   return all_transceivers;
 }
@@ -2534,6 +2526,47 @@ void PeerConnection::SetLocalDescription(
       });
 }
 
+void PeerConnection::RemoveStoppedTransceivers() {
+  // 3.2.10.1: For each transceiver in the connection's set of transceivers
+  //           run the following steps:
+  if (!IsUnifiedPlan())
+    return;
+  for (auto it = transceivers_.begin(); it != transceivers_.end();) {
+    const auto& transceiver = *it;
+    // 3.2.10.1.1: If transceiver is stopped, associated with an m= section
+    //             and the associated m= section is rejected in
+    //             connection.[[CurrentLocalDescription]] or
+    //             connection.[[CurrentRemoteDescription]], remove the
+    //             transceiver from the connection's set of transceivers.
+    if (!transceiver->stopped()) {
+      ++it;
+      continue;
+    }
+    const ContentInfo* local_content =
+        FindMediaSectionForTransceiver(transceiver, local_description());
+    const ContentInfo* remote_content =
+        FindMediaSectionForTransceiver(transceiver, remote_description());
+    if ((local_content && local_content->rejected) ||
+        (remote_content && remote_content->rejected)) {
+      RTC_LOG(LS_INFO) << "Dissociating transceiver"
+                       << " since the media section is being recycled.";
+      (*it)->internal()->set_mid(absl::nullopt);
+      (*it)->internal()->set_mline_index(absl::nullopt);
+      it = transceivers_.erase(it);
+      continue;
+    }
+    if (!local_content && !remote_content) {
+      // TODO(bugs.webrtc.org/11973): Consider if this should be removed already
+      // See https://github.com/w3c/webrtc-pc/issues/2576
+      RTC_LOG(LS_INFO)
+          << "Dropping stopped transceiver that was never associated";
+      it = transceivers_.erase(it);
+      continue;
+    }
+    ++it;
+  }
+}
+
 void PeerConnection::DoSetLocalDescription(
     std::unique_ptr<SessionDescriptionInterface> desc,
     rtc::scoped_refptr<SetLocalDescriptionObserverInterface> observer) {
@@ -2605,34 +2638,7 @@ void PeerConnection::DoSetLocalDescription(
   RTC_DCHECK(local_description());
 
   if (local_description()->GetType() == SdpType::kAnswer) {
-    // 3.2.10.1: For each transceiver in the connection's set of transceivers
-    //           run the following steps:
-    if (IsUnifiedPlan()) {
-      for (auto it = transceivers_.begin(); it != transceivers_.end();) {
-        const auto& transceiver = *it;
-        // 3.2.10.1.1: If transceiver is stopped, associated with an m= section
-        //             and the associated m= section is rejected in
-        //             connection.[[CurrentLocalDescription]] or
-        //             connection.[[CurrentRemoteDescription]], remove the
-        //             transceiver from the connection's set of transceivers.
-        if (transceiver->stopped()) {
-          const ContentInfo* content =
-              FindMediaSectionForTransceiver(transceiver, local_description());
-
-          if (content && content->rejected) {
-            RTC_LOG(LS_INFO) << "Dissociating transceiver"
-                             << " since the media section is being recycled.";
-            (*it)->internal()->set_mid(absl::nullopt);
-            (*it)->internal()->set_mline_index(absl::nullopt);
-            it = transceivers_.erase(it);
-          } else {
-            ++it;
-          }
-        } else {
-          ++it;
-        }
-      }
-    }
+    RemoveStoppedTransceivers();
 
     // TODO(deadbeef): We already had to hop to the network thread for
     // MaybeStartGathering...
@@ -3100,6 +3106,7 @@ void PeerConnection::DoSetRemoteDescription(
   RTC_DCHECK(remote_description());
 
   if (type == SdpType::kAnswer) {
+    RemoveStoppedTransceivers();
     // TODO(deadbeef): We already had to hop to the network thread for
     // MaybeStartGathering...
     network_thread()->Invoke<void>(
@@ -3566,6 +3573,13 @@ RTCError PeerConnection::UpdateTransceiversAndDataChannels(
         old_remote_content =
             &old_remote_description->description()->contents()[i];
       }
+      // In the case where an m-section has completed its rejection,
+      // and is not being reused, we do not expect a transceiver.
+      if (old_local_content && old_local_content->rejected &&
+          old_remote_content && old_remote_content->rejected &&
+          new_content.rejected) {
+        continue;
+      }
       auto transceiver_or_error =
           AssociateTransceiver(source, new_session.GetType(), i, new_content,
                                old_local_content, old_remote_content);
@@ -3758,23 +3772,17 @@ PeerConnection::AssociateTransceiver(cricket::ContentSource source,
   RTC_DCHECK(IsUnifiedPlan());
   // If this is an offer then the m= section might be recycled. If the m=
   // section is being recycled (defined as: rejected in the current local or
-  // remote description and not rejected in new description), dissociate the
-  // currently associated RtpTransceiver by setting its mid property to null,
-  // and discard the mapping between the transceiver and its m= section index.
+  // remote description and not rejected in new description), the transceiver
+  // should have been removed by RemoveStoppedTransceivers().
   if (IsMediaSectionBeingRecycled(type, content, old_local_content,
                                   old_remote_content)) {
-    // We want to dissociate the transceiver that has the rejected mid.
     const std::string& old_mid =
         (old_local_content && old_local_content->rejected)
             ? old_local_content->name
             : old_remote_content->name;
     auto old_transceiver = GetAssociatedTransceiver(old_mid);
-    if (old_transceiver) {
-      RTC_LOG(LS_INFO) << "Dissociating transceiver for MID=" << old_mid
-                       << " since the media section is being recycled.";
-      old_transceiver->internal()->set_mid(absl::nullopt);
-      old_transceiver->internal()->set_mline_index(absl::nullopt);
-    }
+    // The transceiver should be disassociated in RemoveStoppedTransceivers()
+    RTC_DCHECK(!old_transceiver);
   }
   const MediaContentDescription* media_desc = content.media_description();
   auto transceiver = GetAssociatedTransceiver(content.name);
@@ -4075,16 +4083,24 @@ RTCError PeerConnection::SetConfiguration(
   }
 
   if (modified_config.allow_codec_switching.has_value()) {
+    std::vector<cricket::VideoMediaChannel*> channels;
     for (const auto& transceiver : transceivers_) {
-      if (transceiver->media_type() != cricket::MEDIA_TYPE_VIDEO ||
-          !transceiver->internal()->channel()) {
+      if (transceiver->media_type() != cricket::MEDIA_TYPE_VIDEO)
         continue;
-      }
+
       auto* video_channel = static_cast<cricket::VideoChannel*>(
           transceiver->internal()->channel());
-      video_channel->media_channel()->SetVideoCodecSwitchingEnabled(
-          *modified_config.allow_codec_switching);
+      if (video_channel)
+        channels.push_back(video_channel->media_channel());
     }
+
+    worker_thread()->Invoke<void>(
+        RTC_FROM_HERE,
+        [channels = std::move(channels),
+         allow_codec_switching = *modified_config.allow_codec_switching]() {
+          for (auto* ch : channels)
+            ch->SetVideoCodecSwitchingEnabled(allow_codec_switching);
+        });
   }
 
   configuration_ = modified_config;
@@ -4337,7 +4353,8 @@ bool PeerConnection::StartRtcEventLog(std::unique_ptr<RtcEventLogOutput> output,
 bool PeerConnection::StartRtcEventLog(
     std::unique_ptr<RtcEventLogOutput> output) {
   int64_t output_period_ms = webrtc::RtcEventLog::kImmediateOutput;
-  if (field_trial::IsEnabled("WebRTC-RtcEventLogNewFormat")) {
+  if (absl::StartsWith(factory_->trials().Lookup("WebRTC-RtcEventLogNewFormat"),
+                       "Enabled")) {
     output_period_ms = 5000;
   }
   return StartRtcEventLog(std::move(output), output_period_ms);
@@ -5277,10 +5294,19 @@ void PeerConnection::GetOptionsForUnifiedPlanAnswer(
     if (media_type == cricket::MEDIA_TYPE_AUDIO ||
         media_type == cricket::MEDIA_TYPE_VIDEO) {
       auto transceiver = GetAssociatedTransceiver(content.name);
-      RTC_CHECK(transceiver);
-      session_options->media_description_options.push_back(
-          GetMediaDescriptionOptionsForTransceiver(transceiver, content.name,
-                                                   /*is_create_offer=*/false));
+      if (transceiver) {
+        session_options->media_description_options.push_back(
+            GetMediaDescriptionOptionsForTransceiver(
+                transceiver, content.name,
+                /*is_create_offer=*/false));
+      } else {
+        // This should only happen with rejected transceivers.
+        RTC_DCHECK(content.rejected);
+        session_options->media_description_options.push_back(
+            cricket::MediaDescriptionOptions(media_type, content.name,
+                                             RtpTransceiverDirection::kInactive,
+                                             /*stopped=*/true));
+      }
     } else {
       RTC_CHECK_EQ(cricket::MEDIA_TYPE_DATA, media_type);
       // Reject all data sections if data channels are disabled.
@@ -5771,9 +5797,8 @@ PeerConnection::InitializePortAllocator_n(
   // by experiment.
   if (configuration.disable_ipv6) {
     port_allocator_flags &= ~(cricket::PORTALLOCATOR_ENABLE_IPV6);
-  } else if (absl::StartsWith(
-                 webrtc::field_trial::FindFullName("WebRTC-IPv6Default"),
-                 "Disabled")) {
+  } else if (absl::StartsWith(factory_->trials().Lookup("WebRTC-IPv6Default"),
+                              "Disabled")) {
     port_allocator_flags &= ~(cricket::PORTALLOCATOR_ENABLE_IPV6);
   }
 

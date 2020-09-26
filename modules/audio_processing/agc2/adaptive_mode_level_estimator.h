@@ -13,7 +13,8 @@
 
 #include <stddef.h>
 
-#include "modules/audio_processing/agc2/agc2_common.h"  // kFullBufferSizeMs...
+#include "absl/types/optional.h"
+#include "modules/audio_processing/agc2/agc2_common.h"
 #include "modules/audio_processing/agc2/saturation_protector.h"
 #include "modules/audio_processing/agc2/vad_with_level.h"
 #include "modules/audio_processing/include/audio_processing.h"
@@ -21,33 +22,62 @@
 namespace webrtc {
 class ApmDataDumper;
 
+// Level estimator for the digital adaptive gain controller.
 class AdaptiveModeLevelEstimator {
  public:
   explicit AdaptiveModeLevelEstimator(ApmDataDumper* apm_data_dumper);
+  AdaptiveModeLevelEstimator(const AdaptiveModeLevelEstimator&) = delete;
+  AdaptiveModeLevelEstimator& operator=(const AdaptiveModeLevelEstimator&) =
+      delete;
+  // Deprecated ctor.
   AdaptiveModeLevelEstimator(
       ApmDataDumper* apm_data_dumper,
       AudioProcessing::Config::GainController2::LevelEstimator level_estimator,
       bool use_saturation_protector,
       float extra_saturation_margin_db);
-  void UpdateEstimation(const VadWithLevel::LevelAndProbability& vad_data);
-  float LatestLevelEstimate() const;
+  // TODO(crbug.com/webrtc/7494): Replace ctor above with the one below.
+  AdaptiveModeLevelEstimator(
+      ApmDataDumper* apm_data_dumper,
+      AudioProcessing::Config::GainController2::LevelEstimator level_estimator,
+      bool use_saturation_protector,
+      float initial_saturation_margin_db,
+      float extra_saturation_margin_db);
+
+  // Updates the level estimation.
+  void Update(const VadLevelAnalyzer::Result& vad_data);
+  // Returns the estimated speech plus noise level.
+  float GetLevelDbfs() const;
+  // Returns true if the estimator is confident on its current estimate.
+  bool IsConfident() const;
+
   void Reset();
-  bool LevelEstimationIsConfident() const {
-    return buffer_size_ms_ >= kFullBufferSizeMs;
-  }
 
  private:
+  // Part of the level estimator state used for check-pointing and restore ops.
+  struct State {
+    struct Ratio {
+      float numerator;
+      float denominator;
+      float GetRatio() const;
+    };
+    int time_to_full_buffer_ms;
+    Ratio level_dbfs;
+    // TODO(crbug.com/webrtc/7494): Add saturation protector state.
+  };
+
+  void ResetState(State& state);
   void DebugDumpEstimate();
 
-  const AudioProcessing::Config::GainController2::LevelEstimator
-      level_estimator_;
-  const bool use_saturation_protector_;
-  size_t buffer_size_ms_ = 0;
-  float last_estimate_with_offset_dbfs_ = kInitialSpeechLevelEstimateDbfs;
-  float estimate_numerator_ = 0.f;
-  float estimate_denominator_ = 0.f;
-  SaturationProtector saturation_protector_;
   ApmDataDumper* const apm_data_dumper_;
+  SaturationProtector saturation_protector_;
+
+  const AudioProcessing::Config::GainController2::LevelEstimator
+      level_estimator_type_;
+  const bool use_saturation_protector_;
+  const float extra_saturation_margin_db_;
+  // TODO(crbug.com/webrtc/7494): Add temporary state.
+  State state_;
+  absl::optional<float> last_level_dbfs_;
 };
 
 }  // namespace webrtc

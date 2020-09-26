@@ -28,6 +28,7 @@
 #include "api/rtc_event_log/rtc_event_log_factory.h"
 #include "api/rtp_receiver_interface.h"
 #include "api/task_queue/default_task_queue_factory.h"
+#include "api/transport/field_trial_based_config.h"
 #include "api/uma_metrics.h"
 #include "api/video_codecs/sdp_video_format.h"
 #include "call/call.h"
@@ -633,6 +634,7 @@ class PeerConnectionWrapper : public webrtc::PeerConnectionObserver,
     pc_factory_dependencies.signaling_thread = signaling_thread;
     pc_factory_dependencies.task_queue_factory =
         webrtc::CreateDefaultTaskQueueFactory();
+    pc_factory_dependencies.trials = std::make_unique<FieldTrialBasedConfig>();
     cricket::MediaEngineDependencies media_deps;
     media_deps.task_queue_factory =
         pc_factory_dependencies.task_queue_factory.get();
@@ -651,6 +653,8 @@ class PeerConnectionWrapper : public webrtc::PeerConnectionObserver,
       // use the builder for testing to create an APM object.
       media_deps.audio_processing = AudioProcessingBuilderForTesting().Create();
     }
+
+    media_deps.trials = pc_factory_dependencies.trials.get();
 
     pc_factory_dependencies.media_engine =
         cricket::CreateMediaEngine(std::move(media_deps));
@@ -5597,6 +5601,52 @@ TEST_F(PeerConnectionIntegrationTestUnifiedPlan,
               ElementsAre(PeerConnectionInterface::kIceGatheringGathering,
                           PeerConnectionInterface::kIceGatheringComplete,
                           PeerConnectionInterface::kIceGatheringNew));
+}
+
+TEST_F(PeerConnectionIntegrationTestUnifiedPlan,
+       StopTransceiverEndsIncomingAudioTrack) {
+  RTCConfiguration config;
+  ASSERT_TRUE(CreatePeerConnectionWrappersWithConfig(config, config));
+  ConnectFakeSignaling();
+  auto audio_transceiver_or_error =
+      caller()->pc()->AddTransceiver(caller()->CreateLocalAudioTrack());
+  ASSERT_TRUE(audio_transceiver_or_error.ok());
+  auto audio_transceiver = audio_transceiver_or_error.MoveValue();
+
+  caller()->CreateAndSetAndSignalOffer();
+  ASSERT_TRUE_WAIT(SignalingStateStable(), kDefaultTimeout);
+  auto caller_track = audio_transceiver->receiver()->track();
+  auto callee_track = callee()->pc()->GetReceivers()[0]->track();
+  audio_transceiver->StopStandard();
+  EXPECT_EQ(MediaStreamTrackInterface::TrackState::kEnded,
+            caller_track->state());
+  caller()->CreateAndSetAndSignalOffer();
+  ASSERT_TRUE_WAIT(SignalingStateStable(), kDefaultTimeout);
+  EXPECT_EQ(MediaStreamTrackInterface::TrackState::kEnded,
+            callee_track->state());
+}
+
+TEST_F(PeerConnectionIntegrationTestUnifiedPlan,
+       StopTransceiverEndsIncomingVideoTrack) {
+  RTCConfiguration config;
+  ASSERT_TRUE(CreatePeerConnectionWrappersWithConfig(config, config));
+  ConnectFakeSignaling();
+  auto audio_transceiver_or_error =
+      caller()->pc()->AddTransceiver(caller()->CreateLocalVideoTrack());
+  ASSERT_TRUE(audio_transceiver_or_error.ok());
+  auto audio_transceiver = audio_transceiver_or_error.MoveValue();
+
+  caller()->CreateAndSetAndSignalOffer();
+  ASSERT_TRUE_WAIT(SignalingStateStable(), kDefaultTimeout);
+  auto caller_track = audio_transceiver->receiver()->track();
+  auto callee_track = callee()->pc()->GetReceivers()[0]->track();
+  audio_transceiver->StopStandard();
+  EXPECT_EQ(MediaStreamTrackInterface::TrackState::kEnded,
+            caller_track->state());
+  caller()->CreateAndSetAndSignalOffer();
+  ASSERT_TRUE_WAIT(SignalingStateStable(), kDefaultTimeout);
+  EXPECT_EQ(MediaStreamTrackInterface::TrackState::kEnded,
+            callee_track->state());
 }
 
 #ifdef HAVE_SCTP

@@ -201,6 +201,8 @@ rtc_library("video_stream_encoder_impl") {
 
   # visibility = [ "../api/video:video_stream_encoder_create" ]
   sources = [
+    "alignment_adjuster.cc",
+    "alignment_adjuster.h",
     "encoder_bitrate_adjuster.cc",
     "encoder_bitrate_adjuster.h",
     "encoder_overshoot_detector.cc",
@@ -254,6 +256,7 @@ rtc_library("video_stream_encoder_impl") {
     "../rtc_base/experiments:rate_control_settings",
     "../rtc_base/synchronization:mutex",
     "../rtc_base/synchronization:sequence_checker",
+    "../rtc_base/task_utils:pending_task_safety_flag",
     "../rtc_base/task_utils:repeating_task",
     "../system_wrappers",
     "../system_wrappers:field_trial",
@@ -298,6 +301,7 @@ if (rtc_include_tests) {
       "../api:rtc_event_log_output_file",
       "../api:test_dependency_factory",
       "../api:video_quality_test_fixture_api",
+      "../api/numerics",
       "../api/rtc_event_log:rtc_event_log_factory",
       "../api/task_queue",
       "../api/task_queue:default_task_queue_factory",
@@ -514,6 +518,7 @@ if (rtc_include_tests) {
 
     defines = []
     sources = [
+      "alignment_adjuster_unittest.cc",
       "buffered_frame_decryptor_unittest.cc",
       "call_stats2_unittest.cc",
       "call_stats_unittest.cc",

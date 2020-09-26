@@ -188,7 +188,6 @@ if (is_android) {
       "androidapp/res/values/strings.xml",
       "androidapp/res/xml/preferences.xml",
     ]
-    create_srcjar = false
 
     # Needed for Bazel converter.
     custom_package = "org.appspot.apprtc"
@@ -633,6 +632,7 @@ if (is_ios || (is_mac && target_cpu != "x86")) {
       }
 
       rtc_test("apprtcmobile_tests") {
+        is_xctest = true
         info_plist = "objc/AppRTCMobile/ios/Info.plist"
         sources = [ "objc/AppRTCMobile/tests/main.mm" ]
         deps = [

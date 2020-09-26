@@ -8,8 +8,8 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#ifndef RTC_BASE_FUNCTION_H_
-#define RTC_BASE_FUNCTION_H_
+#ifndef RTC_BASE_UNTYPED_FUNCTION_H_
+#define RTC_BASE_UNTYPED_FUNCTION_H_
 
 #include <memory>
 #include <type_traits>
@@ -32,23 +32,25 @@ template <typename T>
 struct CallHelpers;
 template <typename RetT, typename... ArgT>
 struct CallHelpers<RetT(ArgT...)> {
+  // Return type of the three helpers below.
   using return_type = RetT;
+  // Complete function type of the three helpers below.
+  using function_type = RetT(VoidUnion*, ArgT...);
+  // Helper for calling the `void_ptr` case of VoidUnion.
   template <typename F>
   static RetT CallVoidPtr(VoidUnion* vu, ArgT... args) {
     return (*static_cast<F*>(vu->void_ptr))(std::forward<ArgT>(args)...);
   }
+  // Helper for calling the `fun_ptr` case of VoidUnion.
   static RetT CallFunPtr(VoidUnion* vu, ArgT... args) {
     return (reinterpret_cast<RetT (*)(ArgT...)>(vu->fun_ptr))(
         std::forward<ArgT>(args)...);
   }
+  // Helper for calling the `inline_storage` case of VoidUnion.
   template <typename F>
   static RetT CallInlineStorage(VoidUnion* vu, ArgT... args) {
     return (*reinterpret_cast<F*>(&vu->inline_storage))(
         std::forward<ArgT>(args)...);
-  }
-  static RetT DoCall(FunVoid* f, VoidUnion* vu, ArgT... args) {
-    return reinterpret_cast<RetT (*)(VoidUnion*, ArgT...)>(f)(
-        vu, std::forward<ArgT>(args)...);
   }
 };
 
@@ -102,9 +104,10 @@ class UntypedFunction final {
     } else {
       // The callable is either nontrivial or too large, so we can't keep it
       // in the inline storage; use the heap instead.
+      webrtc_function_impl::VoidUnion vu;
+      vu.void_ptr = new F_deref(std::forward<F>(f));
       return UntypedFunction(
-          webrtc_function_impl::VoidUnion{.void_ptr =
-                                              new F_deref(std::forward<F>(f))},
+          vu,
           reinterpret_cast<webrtc_function_impl::FunVoid*>(
               webrtc_function_impl::CallHelpers<
                   Signature>::template CallVoidPtr<F_deref>),
@@ -123,8 +126,10 @@ class UntypedFunction final {
   // the result is an empty UntypedFunction.
   template <typename Signature>
   static UntypedFunction Create(Signature* f) {
+    webrtc_function_impl::VoidUnion vu;
+    vu.fun_ptr = reinterpret_cast<webrtc_function_impl::FunVoid*>(f);
     return UntypedFunction(
-        reinterpret_cast<webrtc_function_impl::FunVoid*>(f),
+        vu,
         f ? reinterpret_cast<webrtc_function_impl::FunVoid*>(
                 webrtc_function_impl::CallHelpers<Signature>::CallFunPtr)
           : nullptr,
@@ -133,6 +138,18 @@ class UntypedFunction final {
 
   // Default constructor. Creates an empty UntypedFunction.
   UntypedFunction() : call_(nullptr), delete_(nullptr) {}
+
+  // Nullptr constructor and assignment. Creates an empty UntypedFunction.
+  UntypedFunction(std::nullptr_t)  // NOLINT(runtime/explicit)
+      : call_(nullptr), delete_(nullptr) {}
+  UntypedFunction& operator=(std::nullptr_t) {
+    call_ = nullptr;
+    if (delete_) {
+      delete_(&f_);
+      delete_ = nullptr;
+    }
+    return *this;
+  }
 
   // Not copyable.
   UntypedFunction(const UntypedFunction&) = delete;
@@ -144,6 +161,9 @@ class UntypedFunction final {
     other.delete_ = nullptr;
   }
   UntypedFunction& operator=(UntypedFunction&& other) {
+    if (delete_) {
+      delete_(&f_);
+    }
     f_ = other.f_;
     call_ = other.call_;
     delete_ = other.delete_;
@@ -169,9 +189,10 @@ class UntypedFunction final {
 
   template <typename Signature, typename... ArgT>
   typename webrtc_function_impl::CallHelpers<Signature>::return_type Call(
-      ArgT... args) {
-    return webrtc_function_impl::CallHelpers<Signature>::DoCall(
-        call_, &f_, std::forward<ArgT>(args)...);
+      ArgT&&... args) {
+    return reinterpret_cast<
+        typename webrtc_function_impl::CallHelpers<Signature>::function_type*>(
+        call_)(&f_, std::forward<ArgT>(args)...);
   }
 
   // Returns true iff we don't need to call a destructor. This is guaranteed
@@ -199,4 +220,4 @@ class UntypedFunction final {
 
 }  // namespace webrtc
 
-#endif  // RTC_BASE_FUNCTION_H_
+#endif  // RTC_BASE_UNTYPED_FUNCTION_H_

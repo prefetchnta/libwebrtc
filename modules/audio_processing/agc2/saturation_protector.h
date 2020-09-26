@@ -13,8 +13,8 @@
 
 #include <array>
 
+#include "absl/types/optional.h"
 #include "modules/audio_processing/agc2/agc2_common.h"
-#include "modules/audio_processing/agc2/vad_with_level.h"
 
 namespace webrtc {
 
@@ -23,47 +23,48 @@ class ApmDataDumper;
 class SaturationProtector {
  public:
   explicit SaturationProtector(ApmDataDumper* apm_data_dumper);
-
   SaturationProtector(ApmDataDumper* apm_data_dumper,
-                      float extra_saturation_margin_db);
+                      float initial_saturation_margin_db);
 
-  // Update and return margin estimate. This method should be called
-  // whenever a frame is reliably classified as 'speech'.
-  //
-  // Returned value is in DB scale.
-  void UpdateMargin(const VadWithLevel::LevelAndProbability& vad_data,
-                    float last_speech_level_estimate_dbfs);
-
-  // Returns latest computed margin. Used in cases when speech is not
-  // detected.
-  float LastMargin() const;
-
-  // Resets the internal memory.
   void Reset();
+
+  // Updates the margin by analyzing the estimated speech level
+  // `speech_level_dbfs` and the peak power `speech_peak_dbfs` for an observed
+  // frame which is reliably classified as "speech".
+  void UpdateMargin(float speech_peak_dbfs, float speech_level_dbfs);
+
+  // Returns latest computed margin.
+  float margin_db() const { return margin_db_; }
 
   void DebugDumpEstimate() const;
 
  private:
-  // Computes a delayed envelope of peaks.
-  class PeakEnveloper {
+  // Ring buffer which only supports (i) push back and (ii) read oldest item.
+  class RingBuffer {
    public:
-    PeakEnveloper();
-    void Process(float frame_peak_dbfs);
-
-    float Query() const;
+    void Reset();
+    // Pushes back `v`. If the buffer is full, the oldest item is replaced.
+    void PushBack(float v);
+    // Returns the oldest item in the buffer. Returns an empty value if the
+    // buffer is empty.
+    absl::optional<float> Front() const;
 
    private:
-    size_t speech_time_in_estimate_ms_ = 0;
-    float current_superframe_peak_dbfs_ = -90.f;
-    size_t elements_in_buffer_ = 0;
-    std::array<float, kPeakEnveloperBufferSize> peak_delay_buffer_ = {};
+    std::array<float, kPeakEnveloperBufferSize> buffer_;
+    int next_ = 0;
+    int size_ = 0;
   };
 
-  ApmDataDumper* apm_data_dumper_;
+  float GetDelayedPeakDbfs() const;
 
-  float last_margin_;
-  PeakEnveloper peak_enveloper_;
-  const float extra_saturation_margin_db_;
+  ApmDataDumper* apm_data_dumper_;
+  // Parameters.
+  const float initial_saturation_margin_db_;
+  // State.
+  float margin_db_;
+  RingBuffer peak_delay_buffer_;
+  float max_peaks_dbfs_;
+  int time_since_push_ms_;
 };
 
 }  // namespace webrtc

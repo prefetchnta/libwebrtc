@@ -20,6 +20,7 @@
 #include "api/scoped_refptr.h"
 #include "api/task_queue/task_queue_factory.h"
 #include "api/transport/rtp/rtp_source.h"
+#include "api/transport/webrtc_key_value_config.h"
 #include "call/audio_state.h"
 #include "call/call.h"
 #include "media/base/media_engine.h"
@@ -49,7 +50,8 @@ class WebRtcVoiceEngine final : public VoiceEngineInterface {
       const rtc::scoped_refptr<webrtc::AudioEncoderFactory>& encoder_factory,
       const rtc::scoped_refptr<webrtc::AudioDecoderFactory>& decoder_factory,
       rtc::scoped_refptr<webrtc::AudioMixer> audio_mixer,
-      rtc::scoped_refptr<webrtc::AudioProcessing> audio_processing);
+      rtc::scoped_refptr<webrtc::AudioProcessing> audio_processing,
+      const webrtc::WebRtcKeyValueConfig& trials);
   ~WebRtcVoiceEngine() override;
 
   // Does initialization that needs to occur on the worker thread.
@@ -127,6 +129,11 @@ class WebRtcVoiceEngine final : public VoiceEngineInterface {
   int audio_jitter_buffer_min_delay_ms_ = 0;
   bool audio_jitter_buffer_enable_rtx_handling_ = false;
 
+  // If this field trial is enabled, we will negotiate and use RFC 2198
+  // redundancy for opus audio.
+  const bool audio_red_for_opus_trial_enabled_;
+  const bool minimized_remsampling_on_mobile_trial_enabled_;
+
   RTC_DISALLOW_IMPLICIT_CONSTRUCTORS(WebRtcVoiceEngine);
 };
 
@@ -195,7 +202,7 @@ class WebRtcVoiceMediaChannel final : public VoiceMediaChannel,
   void OnNetworkRouteChanged(const std::string& transport_name,
                              const rtc::NetworkRoute& network_route) override;
   void OnReadyToSend(bool ready) override;
-  bool GetStats(VoiceMediaInfo* info) override;
+  bool GetStats(VoiceMediaInfo* info, bool get_and_clear_legacy_stats) override;
 
   // Set the audio sink for an existing stream.
   void SetRawAudioSink(
@@ -330,6 +337,8 @@ class WebRtcVoiceMediaChannel final : public VoiceMediaChannel,
   // Unsignaled streams have an option to have a frame decryptor set on them.
   rtc::scoped_refptr<webrtc::FrameDecryptorInterface>
       unsignaled_frame_decryptor_;
+
+  const bool audio_red_for_opus_trial_enabled_;
 
   RTC_DISALLOW_IMPLICIT_CONSTRUCTORS(WebRtcVoiceMediaChannel);
 };
