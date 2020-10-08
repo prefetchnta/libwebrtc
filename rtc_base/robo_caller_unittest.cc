@@ -50,6 +50,32 @@ TEST(RoboCaller, ReferenceTest) {
   EXPECT_EQ(index, 2);
 }
 
+enum State {
+  kNew,
+  kChecking,
+};
+
+TEST(RoboCaller, SingleEnumValueTest) {
+  RoboCaller<State> c;
+  State s1 = kNew;
+  int index = 0;
+
+  c.AddReceiver([&index](State s) { index++; });
+  c.Send(s1);
+
+  EXPECT_EQ(index, 1);
+}
+
+TEST(RoboCaller, SingleEnumReferenceTest) {
+  RoboCaller<State&> c;
+  State s = kNew;
+
+  c.AddReceiver([](State& s) { s = kChecking; });
+  c.Send(s);
+
+  EXPECT_EQ(s, kChecking);
+}
+
 TEST(RoboCaller, ConstReferenceTest) {
   RoboCaller<int&> c;
   int i = 0;
@@ -109,15 +135,14 @@ struct LargeNonTrivial {
 TEST(RoboCaller, LargeNonTrivialTest) {
   RoboCaller<int&> c;
   int i = 0;
-  static_assert(sizeof(LargeNonTrivial) > 16, "");
+  static_assert(sizeof(LargeNonTrivial) > UntypedFunction::kInlineStorageSize,
+                "");
   c.AddReceiver(LargeNonTrivial());
   c.Send(i);
 
   EXPECT_EQ(i, 1);
 }
 
-/* sizeof(LargeTrivial) = 20bytes which is greater than
- * the size check (16bytes) of the CSC library */
 struct LargeTrivial {
   int a[17];
   void operator()(int& x) { x = 1; }
@@ -128,7 +153,7 @@ TEST(RoboCaller, LargeTrivial) {
   LargeTrivial lt;
   int i = 0;
 
-  static_assert(sizeof(lt) > 16, "");
+  static_assert(sizeof(lt) > UntypedFunction::kInlineStorageSize, "");
   c.AddReceiver(lt);
   c.Send(i);
 
@@ -165,6 +190,22 @@ TEST(RoboCaller, MultipleReceiverSendTest) {
   c.Send(index);
 
   EXPECT_EQ(index, 5);
+}
+
+class A {
+ public:
+  void increment(int& i) const { i++; }
+};
+
+TEST(RoboCaller, MemberFunctionTest) {
+  RoboCaller<int&> c;
+  A a;
+  int index = 1;
+
+  c.AddReceiver([&a](int& i) { a.increment(i); });
+  c.Send(index);
+
+  EXPECT_EQ(index, 2);
 }
 // todo(glahiru): Add a test case to catch some error for Karl's first fix
 // todo(glahiru): Add a test for rtc::Bind

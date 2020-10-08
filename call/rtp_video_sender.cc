@@ -334,16 +334,10 @@ RtpVideoSender::RtpVideoSender(
     : send_side_bwe_with_overhead_(absl::StartsWith(
           field_trials_.Lookup("WebRTC-SendSideBwe-WithOverhead"),
           "Enabled")),
-      account_for_packetization_overhead_(!absl::StartsWith(
-          field_trials_.Lookup("WebRTC-SubtractPacketizationOverhead"),
-          "Disabled")),
-      use_early_loss_detection_(!absl::StartsWith(
-          field_trials_.Lookup("WebRTC-UseEarlyLossDetection"),
-          "Disabled")),
       has_packet_feedback_(TransportSeqNumExtensionConfigured(rtp_config)),
-      use_deferred_fec_(
-          absl::StartsWith(field_trials_.Lookup("WebRTC-DeferredFecGeneration"),
-                           "Enabled")),
+      use_deferred_fec_(!absl::StartsWith(
+          field_trials_.Lookup("WebRTC-DeferredFecGeneration"),
+          "Disabled")),
       active_(false),
       module_process_thread_(nullptr),
       suspended_ssrcs_(std::move(suspended_ssrcs)),
@@ -789,16 +783,13 @@ void RtpVideoSender::OnBitrateUpdated(BitrateAllocationUpdate update,
     // since |fec_allowed_| may be toggled back on at any moment.
   }
 
-  uint32_t packetization_rate_bps = 0;
-  if (account_for_packetization_overhead_) {
     // Subtract packetization overhead from the encoder target. If target rate
     // is really low, cap the overhead at 50%. This also avoids the case where
     // |encoder_target_rate_bps_| is 0 due to encoder pause event while the
     // packetization rate is positive since packets are still flowing.
-    packetization_rate_bps =
-        std::min(GetPacketizationOverheadRate(), encoder_target_rate_bps_ / 2);
-    encoder_target_rate_bps_ -= packetization_rate_bps;
-  }
+  uint32_t packetization_rate_bps =
+      std::min(GetPacketizationOverheadRate(), encoder_target_rate_bps_ / 2);
+  encoder_target_rate_bps_ -= packetization_rate_bps;
 
   loss_mask_vector_.clear();
 
@@ -899,7 +890,6 @@ void RtpVideoSender::OnPacketFeedbackVector(
     }
   }
 
-  if (use_early_loss_detection_) {
     // Map from SSRC to vector of RTP sequence numbers that are indicated as
     // lost by feedback, without being trailed by any received packets.
     std::map<uint32_t, std::vector<uint16_t>> early_loss_detected_per_ssrc;
@@ -925,7 +915,6 @@ void RtpVideoSender::OnPacketFeedbackVector(
         rtp_sender->ReSendPacket(sequence_number);
       }
     }
-  }
 
   for (const auto& kv : acked_packets_per_ssrc) {
     const uint32_t ssrc = kv.first;

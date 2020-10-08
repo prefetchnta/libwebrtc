@@ -53,6 +53,7 @@ rtc_library("frame_generator_impl") {
     "../api/video:video_frame",
     "../api/video:video_frame_i010",
     "../api/video:video_frame_i420",
+    "../api/video:video_frame_nv12",
     "../api/video:video_rtp_headers",
     "../api/video_codecs:video_codecs_api",
     "../common_video",
@@ -252,6 +253,7 @@ rtc_library("perf_test") {
     "../rtc_base:logging",
     "../rtc_base:rtc_numerics",
     "../rtc_base/synchronization:mutex",
+    "../test:fileutils",
   ]
   absl_deps = [ "//third_party/abseil-cpp/absl/types:optional" ]
   if (rtc_enable_protobuf) {
@@ -638,7 +640,7 @@ rtc_library("fileutils") {
     deps += [ ":fileutils_mac_objc" ]
   }
   if (is_win) {
-    deps += [ "../rtc_base" ]
+    deps += [ "../rtc_base:win32" ]
   }
 }
 
@@ -667,7 +669,7 @@ rtc_library("fileutils_override_impl") {
     deps += [ ":fileutils_mac_objc" ]
   }
   if (is_win) {
-    deps += [ "../rtc_base" ]
+    deps += [ "../rtc_base:win32" ]
   }
 }
 

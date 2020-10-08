@@ -41,19 +41,23 @@ bool VoipCore::Init(rtc::scoped_refptr<AudioEncoderFactory> encoder_factory,
                     rtc::scoped_refptr<AudioDecoderFactory> decoder_factory,
                     std::unique_ptr<TaskQueueFactory> task_queue_factory,
                     rtc::scoped_refptr<AudioDeviceModule> audio_device_module,
-                    rtc::scoped_refptr<AudioProcessing> audio_processing) {
+                    rtc::scoped_refptr<AudioProcessing> audio_processing,
+                    std::unique_ptr<ProcessThread> process_thread) {
   encoder_factory_ = std::move(encoder_factory);
   decoder_factory_ = std::move(decoder_factory);
   task_queue_factory_ = std::move(task_queue_factory);
   audio_device_module_ = std::move(audio_device_module);
   audio_processing_ = std::move(audio_processing);
+  process_thread_ = std::move(process_thread);
 
-  process_thread_ = ProcessThread::Create("ModuleProcessThread");
+  if (!process_thread_) {
+    process_thread_ = ProcessThread::Create("ModuleProcessThread");
+  }
   audio_mixer_ = AudioMixerImpl::Create();
 
   // AudioTransportImpl depends on audio mixer and audio processing instances.
   audio_transport_ = std::make_unique<AudioTransportImpl>(
-      audio_mixer_.get(), audio_processing_.get());
+      audio_mixer_.get(), audio_processing_.get(), nullptr);
 
   // Initialize ADM.
   if (audio_device_module_->Init() != 0) {
@@ -126,8 +130,14 @@ absl::optional<ChannelId> VoipCore::CreateChannel(
           transport, local_ssrc.value(), task_queue_factory_.get(),
           process_thread_.get(), audio_mixer_.get(), decoder_factory_);
 
+  // Check if we need to start the process thread.
+  bool start_process_thread = false;
+
   {
     MutexLock lock(&lock_);
+
+    // Start process thread if the channel is the first one.
+    start_process_thread = channels_.empty();
 
     channel = static_cast<ChannelId>(next_channel_id_);
     channels_[*channel] = audio_channel;
@@ -140,12 +150,20 @@ absl::optional<ChannelId> VoipCore::CreateChannel(
   // Set ChannelId in audio channel for logging/debugging purpose.
   audio_channel->SetId(*channel);
 
+  if (start_process_thread) {
+    process_thread_->Start();
+  }
+
   return channel;
 }
 
 void VoipCore::ReleaseChannel(ChannelId channel) {
   // Destroy channel outside of the lock.
   rtc::scoped_refptr<AudioChannel> audio_channel;
+
+  // Check if process thread is no longer needed.
+  bool stop_process_thread = false;
+
   {
     MutexLock lock(&lock_);
 
@@ -154,9 +172,19 @@ void VoipCore::ReleaseChannel(ChannelId channel) {
       audio_channel = std::move(iter->second);
       channels_.erase(iter);
     }
+
+    // Check if this is the last channel we have.
+    stop_process_thread = channels_.empty();
   }
+
   if (!audio_channel) {
     RTC_LOG(LS_WARNING) << "Channel " << channel << " not found";
+  }
+
+  if (stop_process_thread) {
+    // Release audio channel first to have it DeRegisterModule first.
+    audio_channel = nullptr;
+    process_thread_->Stop();
   }
 }
 

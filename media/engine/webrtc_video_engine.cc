@@ -1297,6 +1297,15 @@ bool WebRtcVideoChannel::AddSendStream(const StreamParams& sp) {
       video_config_.periodic_alr_bandwidth_probing;
   config.encoder_settings.experiment_cpu_load_estimator =
       video_config_.experiment_cpu_load_estimator;
+  // TODO(bugs.webrtc.org/12000): Enable allocation callback type
+  // VideoLayersAllocation if RtpVideoLayersAllocationExtension has been
+  // negotiated in `send_rtp_extensions_`.
+  config.encoder_settings.allocation_cb_type =
+      IsEnabled(call_->trials(), "WebRTC-Target-Bitrate-Rtcp")
+          ? webrtc::VideoStreamEncoderSettings::BitrateAllocationCallbackType::
+                kVideoBitrateAllocation
+          : webrtc::VideoStreamEncoderSettings::BitrateAllocationCallbackType::
+                kVideoBitrateAllocationWhenScreenSharing;
   config.encoder_settings.encoder_factory = encoder_factory_;
   config.encoder_settings.bitrate_allocator_factory =
       bitrate_allocator_factory_;
@@ -3569,10 +3578,18 @@ EncoderStreamFactory::CreateSimulcastOrConferenceModeScreenshareStreams(
           std::max(layers[i].max_bitrate_bps, layers[i].min_bitrate_bps);
     } else if (encoder_config.simulcast_layers[i].max_bitrate_bps > 0) {
       // Only max bitrate is configured, make sure min/target are below max.
+      // Keep target bitrate if it is set explicitly in encoding config.
+      // Otherwise set target bitrate to 3/4 of the max bitrate
+      // or the one calculated from GetSimulcastConfig() which is larger.
       layers[i].min_bitrate_bps =
           std::min(layers[i].min_bitrate_bps, layers[i].max_bitrate_bps);
-      layers[i].target_bitrate_bps =
-          std::min(layers[i].target_bitrate_bps, layers[i].max_bitrate_bps);
+      if (encoder_config.simulcast_layers[i].target_bitrate_bps <= 0) {
+        layers[i].target_bitrate_bps = std::max(
+            layers[i].target_bitrate_bps, layers[i].max_bitrate_bps * 3 / 4);
+      }
+      layers[i].target_bitrate_bps = std::max(
+          std::min(layers[i].target_bitrate_bps, layers[i].max_bitrate_bps),
+          layers[i].min_bitrate_bps);
     }
     if (i == layers.size() - 1) {
       is_highest_layer_max_bitrate_configured =

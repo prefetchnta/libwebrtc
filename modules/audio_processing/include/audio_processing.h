@@ -31,6 +31,7 @@
 #include "modules/audio_processing/include/audio_processing_statistics.h"
 #include "modules/audio_processing/include/config.h"
 #include "rtc_base/arraysize.h"
+#include "rtc_base/constructor_magic.h"
 #include "rtc_base/deprecation.h"
 #include "rtc_base/ref_count.h"
 #include "rtc_base/system/file_wrapper.h"
@@ -344,9 +345,16 @@ class RTC_EXPORT AudioProcessing : public rtc::RefCountInterface {
       } fixed_digital;
       struct {
         bool enabled = false;
+        float vad_probability_attack = 1.f;
         LevelEstimator level_estimator = kRms;
+        int level_estimator_adjacent_speech_frames_threshold = 1;
+        // TODO(crbug.com/webrtc/7494): Remove `use_saturation_protector`.
         bool use_saturation_protector = true;
+        float initial_saturation_margin_db = 20.f;
         float extra_saturation_margin_db = 2.f;
+        int gain_applier_adjacent_speech_frames_threshold = 1;
+        float max_gain_change_db_per_second = 3.f;
+        float max_output_noise_level_dbfs = -50.f;
       } adaptive_digital;
     } gain_controller2;
 

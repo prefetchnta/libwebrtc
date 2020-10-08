@@ -112,7 +112,7 @@ declare_args() {
   # By default it's only enabled on desktop Linux (excludes ChromeOS) and
   # only when using the sysroot as PipeWire is not available in older and
   # supported Ubuntu and Debian distributions.
-  rtc_use_pipewire = is_desktop_linux && use_sysroot
+  rtc_use_pipewire = is_linux && use_sysroot
 
   # Set this to link PipeWire directly instead of using the dlopen.
   rtc_link_pipewire = false
@@ -195,6 +195,11 @@ declare_args() {
   # doesn't assume /DUNICODE and /D_UNICODE but that it explicitly uses
   # wide character functions.
   rtc_win_undef_unicode = false
+
+  # When set to true, a capturer implementation that uses the
+  # Windows.Graphics.Capture APIs will be available for use. These APIs are
+  # available in the Win 10 SDK v10.0.19041.
+  rtc_enable_win_wgc = false
 }
 
 if (!build_with_mozilla) {

@@ -25,11 +25,15 @@
 #include "call/call.h"
 #include "media/base/media_engine.h"
 #include "media/base/rtp_utils.h"
+#include "modules/async_audio_processing/async_audio_processing.h"
 #include "rtc_base/buffer.h"
-#include "rtc_base/constructor_magic.h"
 #include "rtc_base/network_route.h"
 #include "rtc_base/task_queue.h"
 #include "rtc_base/thread_checker.h"
+
+namespace webrtc {
+class AudioFrameProcessor;
+}
 
 namespace cricket {
 
@@ -51,7 +55,13 @@ class WebRtcVoiceEngine final : public VoiceEngineInterface {
       const rtc::scoped_refptr<webrtc::AudioDecoderFactory>& decoder_factory,
       rtc::scoped_refptr<webrtc::AudioMixer> audio_mixer,
       rtc::scoped_refptr<webrtc::AudioProcessing> audio_processing,
+      webrtc::AudioFrameProcessor* audio_frame_processor,
       const webrtc::WebRtcKeyValueConfig& trials);
+
+  WebRtcVoiceEngine() = delete;
+  WebRtcVoiceEngine(const WebRtcVoiceEngine&) = delete;
+  WebRtcVoiceEngine& operator=(const WebRtcVoiceEngine&) = delete;
+
   ~WebRtcVoiceEngine() override;
 
   // Does initialization that needs to occur on the worker thread.
@@ -112,6 +122,8 @@ class WebRtcVoiceEngine final : public VoiceEngineInterface {
   rtc::scoped_refptr<webrtc::AudioMixer> audio_mixer_;
   // The audio processing module.
   rtc::scoped_refptr<webrtc::AudioProcessing> apm_;
+  // Asynchronous audio processing.
+  webrtc::AudioFrameProcessor* const audio_frame_processor_;
   // The primary instance of WebRtc VoiceEngine.
   rtc::scoped_refptr<webrtc::AudioState> audio_state_;
   std::vector<AudioCodec> send_codecs_;
@@ -133,8 +145,6 @@ class WebRtcVoiceEngine final : public VoiceEngineInterface {
   // redundancy for opus audio.
   const bool audio_red_for_opus_trial_enabled_;
   const bool minimized_remsampling_on_mobile_trial_enabled_;
-
-  RTC_DISALLOW_IMPLICIT_CONSTRUCTORS(WebRtcVoiceEngine);
 };
 
 // WebRtcVoiceMediaChannel is an implementation of VoiceMediaChannel that uses
@@ -147,6 +157,11 @@ class WebRtcVoiceMediaChannel final : public VoiceMediaChannel,
                           const AudioOptions& options,
                           const webrtc::CryptoOptions& crypto_options,
                           webrtc::Call* call);
+
+  WebRtcVoiceMediaChannel() = delete;
+  WebRtcVoiceMediaChannel(const WebRtcVoiceMediaChannel&) = delete;
+  WebRtcVoiceMediaChannel& operator=(const WebRtcVoiceMediaChannel&) = delete;
+
   ~WebRtcVoiceMediaChannel() override;
 
   const AudioOptions& options() const { return options_; }
@@ -339,8 +354,6 @@ class WebRtcVoiceMediaChannel final : public VoiceMediaChannel,
       unsignaled_frame_decryptor_;
 
   const bool audio_red_for_opus_trial_enabled_;
-
-  RTC_DISALLOW_IMPLICIT_CONSTRUCTORS(WebRtcVoiceMediaChannel);
 };
 }  // namespace cricket
 
