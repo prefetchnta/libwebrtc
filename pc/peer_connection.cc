@@ -93,20 +93,6 @@ static const char kDefaultVideoSenderId[] = "defaultv0";
 
 static const int REPORT_USAGE_PATTERN_DELAY_MS = 60000;
 
-// Check if we can send |new_stream| on a PeerConnection.
-bool CanAddLocalMediaStream(webrtc::StreamCollectionInterface* current_streams,
-                            webrtc::MediaStreamInterface* new_stream) {
-  if (!new_stream || !current_streams) {
-    return false;
-  }
-  if (current_streams->find(new_stream->id()) != nullptr) {
-    RTC_LOG(LS_ERROR) << "MediaStream with ID " << new_stream->id()
-                      << " is already added.";
-    return false;
-  }
-  return true;
-}
-
 
 uint32_t ConvertIceTransportTypeToCandidateFilter(
     PeerConnectionInterface::IceTransportsType type) {
@@ -349,14 +335,12 @@ bool PeerConnectionInterface::RTCConfiguration::operator!=(
   return !(*this == o);
 }
 
-PeerConnection::PeerConnection(PeerConnectionFactory* factory,
+PeerConnection::PeerConnection(rtc::scoped_refptr<ConnectionContext> context,
                                std::unique_ptr<RtcEventLog> event_log,
                                std::unique_ptr<Call> call)
-    : factory_(factory),
+    : context_(context),
       event_log_(std::move(event_log)),
       event_log_ptr_(event_log_.get()),
-      local_streams_(StreamCollection::Create()),
-      remote_streams_(StreamCollection::Create()),
       call_(std::move(call)),
       call_ptr_(call_.get()),
       sdp_handler_(this),
@@ -480,7 +464,7 @@ bool PeerConnection::Initialize(
   RTC_HISTOGRAM_ENUMERATION("WebRTC.PeerConnection.IPMetrics", address_family,
                             kPeerConnectionAddressFamilyCounter_Max);
 
-  const PeerConnectionFactoryInterface::Options& options = factory_->options();
+  const PeerConnectionFactoryInterface::Options& options = context_->options();
 
   // RFC 3264: The numeric value of the session id and version in the
   // o line MUST be representable with a "64 bit signed integer".
@@ -490,7 +474,7 @@ bool PeerConnection::Initialize(
   JsepTransportController::Config config;
   config.redetermine_role_on_ice_restart =
       configuration.redetermine_role_on_ice_restart;
-  config.ssl_max_version = factory_->options().ssl_max_version;
+  config.ssl_max_version = context_->options().ssl_max_version;
   config.disable_encryption = options.disable_encryption;
   config.bundle_policy = configuration.bundle_policy;
   config.rtcp_mux_policy = configuration.rtcp_mux_policy;
@@ -536,7 +520,7 @@ bool PeerConnection::Initialize(
     // DTLS has to be enabled to use SCTP.
     if (!options.disable_sctp_data_channels && dtls_enabled_) {
       data_channel_controller_.set_data_channel_type(cricket::DCT_SCTP);
-      config.sctp_factory = factory_->sctp_transport_factory();
+      config.sctp_factory = context_->sctp_transport_factory();
     }
   }
 
@@ -658,7 +642,7 @@ rtc::scoped_refptr<StreamCollectionInterface> PeerConnection::local_streams() {
   RTC_CHECK(!IsUnifiedPlan()) << "local_streams is not available with Unified "
                                  "Plan SdpSemantics. Please use GetSenders "
                                  "instead.";
-  return local_streams_;
+  return sdp_handler_.local_streams();
 }
 
 rtc::scoped_refptr<StreamCollectionInterface> PeerConnection::remote_streams() {
@@ -666,7 +650,7 @@ rtc::scoped_refptr<StreamCollectionInterface> PeerConnection::remote_streams() {
   RTC_CHECK(!IsUnifiedPlan()) << "remote_streams is not available with Unified "
                                  "Plan SdpSemantics. Please use GetReceivers "
                                  "instead.";
-  return remote_streams_;
+  return sdp_handler_.remote_streams();
 }
 
 bool PeerConnection::AddStream(MediaStreamInterface* local_stream) {
@@ -674,35 +658,7 @@ bool PeerConnection::AddStream(MediaStreamInterface* local_stream) {
   RTC_CHECK(!IsUnifiedPlan()) << "AddStream is not available with Unified Plan "
                                  "SdpSemantics. Please use AddTrack instead.";
   TRACE_EVENT0("webrtc", "PeerConnection::AddStream");
-  if (IsClosed()) {
-    return false;
-  }
-  if (!CanAddLocalMediaStream(local_streams_, local_stream)) {
-    return false;
-  }
-
-  local_streams_->AddStream(local_stream);
-  MediaStreamObserver* observer = new MediaStreamObserver(local_stream);
-  observer->SignalAudioTrackAdded.connect(this,
-                                          &PeerConnection::OnAudioTrackAdded);
-  observer->SignalAudioTrackRemoved.connect(
-      this, &PeerConnection::OnAudioTrackRemoved);
-  observer->SignalVideoTrackAdded.connect(this,
-                                          &PeerConnection::OnVideoTrackAdded);
-  observer->SignalVideoTrackRemoved.connect(
-      this, &PeerConnection::OnVideoTrackRemoved);
-  stream_observers_.push_back(std::unique_ptr<MediaStreamObserver>(observer));
-
-  for (const auto& track : local_stream->GetAudioTracks()) {
-    AddAudioTrack(track.get(), local_stream);
-  }
-  for (const auto& track : local_stream->GetVideoTracks()) {
-    AddVideoTrack(track.get(), local_stream);
-  }
-
-  stats_->AddStream(local_stream);
-  sdp_handler_.UpdateNegotiationNeeded();
-  return true;
+  return sdp_handler_.AddStream(local_stream);
 }
 
 void PeerConnection::RemoveStream(MediaStreamInterface* local_stream) {
@@ -711,27 +667,7 @@ void PeerConnection::RemoveStream(MediaStreamInterface* local_stream) {
                                  "Plan SdpSemantics. Please use RemoveTrack "
                                  "instead.";
   TRACE_EVENT0("webrtc", "PeerConnection::RemoveStream");
-  if (!IsClosed()) {
-    for (const auto& track : local_stream->GetAudioTracks()) {
-      RemoveAudioTrack(track.get(), local_stream);
-    }
-    for (const auto& track : local_stream->GetVideoTracks()) {
-      RemoveVideoTrack(track.get(), local_stream);
-    }
-  }
-  local_streams_->RemoveStream(local_stream);
-  stream_observers_.erase(
-      std::remove_if(
-          stream_observers_.begin(), stream_observers_.end(),
-          [local_stream](const std::unique_ptr<MediaStreamObserver>& observer) {
-            return observer->stream()->id().compare(local_stream->id()) == 0;
-          }),
-      stream_observers_.end());
-
-  if (IsClosed()) {
-    return;
-  }
-  sdp_handler_.UpdateNegotiationNeeded();
+  sdp_handler_.RemoveStream(local_stream);
 }
 
 RTCErrorOr<rtc::scoped_refptr<RtpSenderInterface>> PeerConnection::AddTrack(
@@ -1714,7 +1650,7 @@ void PeerConnection::SetAudioPlayout(bool playout) {
     return;
   }
   auto audio_state =
-      factory_->channel_manager()->media_engine()->voice().GetAudioState();
+      context_->channel_manager()->media_engine()->voice().GetAudioState();
   audio_state->SetPlayout(playout);
 }
 
@@ -1726,7 +1662,7 @@ void PeerConnection::SetAudioRecording(bool recording) {
     return;
   }
   auto audio_state =
-      factory_->channel_manager()->media_engine()->voice().GetAudioState();
+      context_->channel_manager()->media_engine()->voice().GetAudioState();
   audio_state->SetRecording(recording);
 }
 
@@ -1787,7 +1723,7 @@ bool PeerConnection::StartRtcEventLog(std::unique_ptr<RtcEventLogOutput> output,
 bool PeerConnection::StartRtcEventLog(
     std::unique_ptr<RtcEventLogOutput> output) {
   int64_t output_period_ms = webrtc::RtcEventLog::kImmediateOutput;
-  if (absl::StartsWith(factory_->trials().Lookup("WebRTC-RtcEventLogNewFormat"),
+  if (absl::StartsWith(context_->trials().Lookup("WebRTC-RtcEventLogNewFormat"),
                        "Enabled")) {
     output_period_ms = 5000;
   }
@@ -2003,6 +1939,7 @@ rtc::scoped_refptr<RtpReceiverInterface> PeerConnection::RemoveAndStopReceiver(
 
 void PeerConnection::AddAudioTrack(AudioTrackInterface* track,
                                    MediaStreamInterface* stream) {
+  RTC_DCHECK_RUN_ON(signaling_thread());
   RTC_DCHECK(!IsClosed());
   RTC_DCHECK(track);
   RTC_DCHECK(stream);
@@ -2036,6 +1973,7 @@ void PeerConnection::AddAudioTrack(AudioTrackInterface* track,
 // indefinitely, when we have unified plan SDP.
 void PeerConnection::RemoveAudioTrack(AudioTrackInterface* track,
                                       MediaStreamInterface* stream) {
+  RTC_DCHECK_RUN_ON(signaling_thread());
   RTC_DCHECK(!IsClosed());
   auto sender = FindSenderForTrack(track);
   if (!sender) {
@@ -2048,6 +1986,7 @@ void PeerConnection::RemoveAudioTrack(AudioTrackInterface* track,
 
 void PeerConnection::AddVideoTrack(VideoTrackInterface* track,
                                    MediaStreamInterface* stream) {
+  RTC_DCHECK_RUN_ON(signaling_thread());
   RTC_DCHECK(!IsClosed());
   RTC_DCHECK(track);
   RTC_DCHECK(stream);
@@ -2073,6 +2012,7 @@ void PeerConnection::AddVideoTrack(VideoTrackInterface* track,
 
 void PeerConnection::RemoveVideoTrack(VideoTrackInterface* track,
                                       MediaStreamInterface* stream) {
+  RTC_DCHECK_RUN_ON(signaling_thread());
   RTC_DCHECK(!IsClosed());
   auto sender = FindSenderForTrack(track);
   if (!sender) {
@@ -2238,13 +2178,13 @@ absl::optional<std::string> PeerConnection::GetDataMid() const {
 }
 
 void PeerConnection::OnRemoteSenderAdded(const RtpSenderInfo& sender_info,
+                                         MediaStreamInterface* stream,
                                          cricket::MediaType media_type) {
   RTC_DCHECK_RUN_ON(signaling_thread());
   RTC_LOG(LS_INFO) << "Creating " << cricket::MediaTypeToString(media_type)
                    << " receiver for track_id=" << sender_info.sender_id
                    << " and stream_id=" << sender_info.stream_id;
 
-  MediaStreamInterface* stream = remote_streams_->find(sender_info.stream_id);
   if (media_type == cricket::MEDIA_TYPE_AUDIO) {
     CreateAudioReceiver(stream, sender_info);
   } else if (media_type == cricket::MEDIA_TYPE_VIDEO) {
@@ -2255,13 +2195,12 @@ void PeerConnection::OnRemoteSenderAdded(const RtpSenderInfo& sender_info,
 }
 
 void PeerConnection::OnRemoteSenderRemoved(const RtpSenderInfo& sender_info,
+                                           MediaStreamInterface* stream,
                                            cricket::MediaType media_type) {
   RTC_DCHECK_RUN_ON(signaling_thread());
   RTC_LOG(LS_INFO) << "Removing " << cricket::MediaTypeToString(media_type)
                    << " receiver for track_id=" << sender_info.sender_id
                    << " and stream_id=" << sender_info.stream_id;
-
-  MediaStreamInterface* stream = remote_streams_->find(sender_info.stream_id);
 
   rtc::scoped_refptr<RtpReceiverInterface> receiver;
   if (media_type == cricket::MEDIA_TYPE_AUDIO) {
@@ -2461,7 +2400,7 @@ PeerConnection::InitializePortAllocator_n(
   // by experiment.
   if (configuration.disable_ipv6) {
     port_allocator_flags &= ~(cricket::PORTALLOCATOR_ENABLE_IPV6);
-  } else if (absl::StartsWith(factory_->trials().Lookup("WebRTC-IPv6Default"),
+  } else if (absl::StartsWith(context_->trials().Lookup("WebRTC-IPv6Default"),
                               "Disabled")) {
     port_allocator_flags &= ~(cricket::PORTALLOCATOR_ENABLE_IPV6);
   }
@@ -2541,7 +2480,7 @@ bool PeerConnection::ReconfigurePortAllocator_n(
 }
 
 cricket::ChannelManager* PeerConnection::channel_manager() const {
-  return factory_->channel_manager();
+  return context_->channel_manager();
 }
 
 bool PeerConnection::StartRtcEventLog_w(
@@ -3009,8 +2948,21 @@ void PeerConnection::ReportSdpFormatReceived(
   } else if (num_audio_tracks > 0 || num_video_tracks > 0) {
     format = kSdpFormatReceivedSimple;
   }
-  RTC_HISTOGRAM_ENUMERATION("WebRTC.PeerConnection.SdpFormatReceived", format,
-                            kSdpFormatReceivedMax);
+  switch (remote_offer.GetType()) {
+    case SdpType::kOffer:
+      // Historically only offers were counted.
+      RTC_HISTOGRAM_ENUMERATION("WebRTC.PeerConnection.SdpFormatReceived",
+                                format, kSdpFormatReceivedMax);
+      break;
+    case SdpType::kAnswer:
+      RTC_HISTOGRAM_ENUMERATION("WebRTC.PeerConnection.SdpFormatReceivedAnswer",
+                                format, kSdpFormatReceivedMax);
+      break;
+    default:
+      RTC_LOG(LS_ERROR) << "Can not report SdpFormatReceived for "
+                        << SdpTypeToString(remote_offer.GetType());
+      break;
+  }
 }
 
 void PeerConnection::ReportIceCandidateCollected(
@@ -3029,33 +2981,11 @@ void PeerConnection::ReportIceCandidateCollected(
 
 void PeerConnection::NoteUsageEvent(UsageEvent event) {
   RTC_DCHECK_RUN_ON(signaling_thread());
-  usage_event_accumulator_ |= static_cast<int>(event);
+  usage_pattern_.NoteUsageEvent(event);
 }
 
 void PeerConnection::ReportUsagePattern() const {
-  RTC_DLOG(LS_INFO) << "Usage signature is " << usage_event_accumulator_;
-  RTC_HISTOGRAM_ENUMERATION_SPARSE("WebRTC.PeerConnection.UsagePattern",
-                                   usage_event_accumulator_,
-                                   static_cast<int>(UsageEvent::MAX_VALUE));
-  const int bad_bits =
-      static_cast<int>(UsageEvent::SET_LOCAL_DESCRIPTION_SUCCEEDED) |
-      static_cast<int>(UsageEvent::CANDIDATE_COLLECTED);
-  const int good_bits =
-      static_cast<int>(UsageEvent::SET_REMOTE_DESCRIPTION_SUCCEEDED) |
-      static_cast<int>(UsageEvent::REMOTE_CANDIDATE_ADDED) |
-      static_cast<int>(UsageEvent::ICE_STATE_CONNECTED);
-  if ((usage_event_accumulator_ & bad_bits) == bad_bits &&
-      (usage_event_accumulator_ & good_bits) == 0) {
-    // If called after close(), we can't report, because observer may have
-    // been deallocated, and therefore pointer is null. Write to log instead.
-    if (observer_) {
-      Observer()->OnInterestingUsage(usage_event_accumulator_);
-    } else {
-      RTC_LOG(LS_INFO) << "Interesting usage signature "
-                       << usage_event_accumulator_
-                       << " observed after observer shutdown";
-    }
-  }
+  usage_pattern_.ReportUsagePattern(observer_);
 }
 
 bool PeerConnection::SrtpRequired() const {
@@ -3266,7 +3196,7 @@ CryptoOptions PeerConnection::GetCryptoOptions() {
   // after it has been removed.
   return configuration_.crypto_options.has_value()
              ? *configuration_.crypto_options
-             : factory_->options().crypto_options;
+             : context_->options().crypto_options;
 }
 
 void PeerConnection::ClearStatsCache() {

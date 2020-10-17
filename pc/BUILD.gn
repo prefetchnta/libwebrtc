@@ -159,44 +159,29 @@ rtc_library("peerconnection") {
   visibility = [ "*" ]
   cflags = []
   sources = [
-    "audio_rtp_receiver.cc",
-    "audio_rtp_receiver.h",
-    "audio_track.cc",
-    "audio_track.h",
     "data_channel_controller.cc",
     "data_channel_controller.h",
     "data_channel_utils.cc",
     "data_channel_utils.h",
     "ice_server_parsing.cc",
     "ice_server_parsing.h",
-    "jitter_buffer_delay.cc",
-    "jitter_buffer_delay.h",
-    "jitter_buffer_delay_interface.h",
-    "jitter_buffer_delay_proxy.h",
     "jsep_ice_candidate.cc",
     "jsep_session_description.cc",
     "local_audio_source.cc",
     "local_audio_source.h",
     "media_stream_observer.cc",
     "media_stream_observer.h",
-    "media_stream_track.h",
     "peer_connection.cc",
     "peer_connection.h",
     "peer_connection_factory.cc",
     "peer_connection_factory.h",
     "peer_connection_internal.h",
-    "remote_audio_source.cc",
-    "remote_audio_source.h",
     "rtc_stats_collector.cc",
     "rtc_stats_collector.h",
     "rtc_stats_traversal.cc",
     "rtc_stats_traversal.h",
     "rtp_data_channel.cc",
     "rtp_data_channel.h",
-    "rtp_parameters_conversion.cc",
-    "rtp_parameters_conversion.h",
-    "rtp_transceiver.cc",
-    "rtp_transceiver.h",
     "sctp_data_channel.cc",
     "sctp_data_channel.h",
     "sdp_offer_answer.cc",  # TODO: Make separate target when not circular
@@ -212,12 +197,6 @@ rtc_library("peerconnection") {
     "track_media_info_map.h",
     "transceiver_list.cc",
     "transceiver_list.h",
-    "video_rtp_receiver.cc",
-    "video_rtp_receiver.h",
-    "video_rtp_track_source.cc",
-    "video_rtp_track_source.h",
-    "video_track.cc",
-    "video_track.h",
     "webrtc_sdp.cc",
     "webrtc_sdp.h",
     "webrtc_session_description_factory.cc",
@@ -225,13 +204,25 @@ rtc_library("peerconnection") {
   ]
 
   deps = [
+    ":audio_rtp_receiver",
+    ":audio_track",
+    ":connection_context",
     ":dtmf_sender",
+    ":jitter_buffer_delay",
+    ":jitter_buffer_delay_interface",
+    ":jitter_buffer_delay_proxy",
     ":media_stream",
     ":peer_connection_message_handler",
+    ":remote_audio_source",
     ":rtc_pc_base",
+    ":rtp_parameters_conversion",
     ":rtp_receiver",
     ":rtp_sender",
+    ":rtp_transceiver",
     ":stats_collector_interface",
+    ":usage_pattern",
+    ":video_rtp_receiver",
+    ":video_track",
     ":video_track_source",
     "../api:array_view",
     "../api:audio_options_api",
@@ -292,6 +283,24 @@ rtc_library("peerconnection") {
   ]
 }
 
+rtc_library("connection_context") {
+  sources = [
+    "connection_context.cc",
+    "connection_context.h",
+  ]
+  deps = [
+    ":rtc_pc_base",
+    "../api:libjingle_peerconnection_api",
+    "../api:media_stream_interface",
+    "../api:scoped_refptr",
+    "../api/transport:field_trial_based_config",
+    "../media:rtc_data",
+    "../media:rtc_media_base",
+    "../p2p:rtc_p2p",
+    "../rtc_base",
+  ]
+}
+
 rtc_library("peer_connection_message_handler") {
   sources = [
     "peer_connection_message_handler.cc",
@@ -304,6 +313,40 @@ rtc_library("peer_connection_message_handler") {
     "../api:rtc_error",
     "../rtc_base",
     "../rtc_base/synchronization:sequence_checker",
+  ]
+}
+
+rtc_library("usage_pattern") {
+  sources = [
+    "usage_pattern.cc",
+    "usage_pattern.h",
+  ]
+  deps = [
+    "../api:libjingle_peerconnection_api",
+    "../rtc_base:logging",
+    "../system_wrappers:metrics",
+  ]
+}
+
+rtc_library("rtp_transceiver") {
+  sources = [
+    "rtp_transceiver.cc",
+    "rtp_transceiver.h",
+  ]
+  deps = [
+    ":rtc_pc_base",
+    ":rtp_parameters_conversion",
+    ":rtp_receiver",
+    ":rtp_sender",
+    "../api:libjingle_peerconnection_api",
+    "../api:rtp_parameters",
+    "../rtc_base:checks",
+    "../rtc_base:logging",
+  ]
+  absl_deps = [
+    "//third_party/abseil-cpp/absl/algorithm:container",
+    "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/types:optional",
   ]
 }
 
@@ -334,6 +377,179 @@ rtc_library("rtp_receiver") {
   ]
 }
 
+rtc_library("audio_rtp_receiver") {
+  sources = [
+    "audio_rtp_receiver.cc",
+    "audio_rtp_receiver.h",
+  ]
+  deps = [
+    ":audio_track",
+    ":jitter_buffer_delay",
+    ":jitter_buffer_delay_interface",
+    ":jitter_buffer_delay_proxy",
+    ":media_stream",
+    ":remote_audio_source",
+    ":rtp_receiver",
+    "../api:libjingle_peerconnection_api",
+    "../api:media_stream_interface",
+    "../api:rtp_parameters",
+    "../api:scoped_refptr",
+    "../api/crypto:frame_decryptor_interface",
+    "../media:rtc_media_base",
+    "../rtc_base",
+    "../rtc_base:checks",
+    "../rtc_base:refcount",
+  ]
+  absl_deps = [
+    "//third_party/abseil-cpp/absl/algorithm:container",
+    "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/types:optional",
+  ]
+}
+
+rtc_library("video_rtp_receiver") {
+  sources = [
+    "video_rtp_receiver.cc",
+    "video_rtp_receiver.h",
+  ]
+  deps = [
+    ":jitter_buffer_delay",
+    ":jitter_buffer_delay_interface",
+    ":jitter_buffer_delay_proxy",
+    ":media_stream",
+    ":rtp_receiver",
+    ":video_rtp_track_source",
+    ":video_track",
+    "../api:frame_transformer_interface",
+    "../api:libjingle_peerconnection_api",
+    "../api:media_stream_interface",
+    "../api:rtp_parameters",
+    "../api:scoped_refptr",
+    "../api/crypto:frame_decryptor_interface",
+    "../api/video:video_frame",
+    "../media:rtc_media_base",
+    "../rtc_base",
+    "../rtc_base:checks",
+    "../rtc_base:rtc_base_approved",
+  ]
+  absl_deps = [
+    "//third_party/abseil-cpp/absl/algorithm:container",
+    "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/types:optional",
+  ]
+}
+
+rtc_library("video_rtp_track_source") {
+  sources = [
+    "video_rtp_track_source.cc",
+    "video_rtp_track_source.h",
+  ]
+  deps = [
+    ":video_track_source",
+    "../media:rtc_media_base",
+    "../rtc_base",
+    "../rtc_base/synchronization:mutex",
+  ]
+}
+
+rtc_library("audio_track") {
+  sources = [
+    "audio_track.cc",
+    "audio_track.h",
+  ]
+  deps = [
+    "../api:media_stream_interface",
+    "../api:scoped_refptr",
+    "../rtc_base:checks",
+    "../rtc_base:refcount",
+    "../rtc_base:thread_checker",
+  ]
+}
+
+rtc_library("video_track") {
+  sources = [
+    "video_track.cc",
+    "video_track.h",
+  ]
+  deps = [
+    "../api:media_stream_interface",
+    "../api:scoped_refptr",
+    "../api/video:video_frame",
+    "../media:rtc_media_base",
+    "../rtc_base",
+    "../rtc_base:checks",
+    "../rtc_base:refcount",
+    "../rtc_base:rtc_base_approved",
+  ]
+}
+
+rtc_source_set("jitter_buffer_delay_interface") {
+  sources = [ "jitter_buffer_delay_interface.h" ]
+  deps = [
+    "../media:rtc_media_base",
+    "../rtc_base:refcount",
+  ]
+  absl_deps = [
+    "//third_party/abseil-cpp/absl/algorithm:container",
+    "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/types:optional",
+  ]
+}
+
+rtc_source_set("jitter_buffer_delay_proxy") {
+  sources = [ "jitter_buffer_delay_proxy.h" ]
+  deps = [
+    ":jitter_buffer_delay_interface",
+    "../api:libjingle_peerconnection_api",
+    "../media:rtc_media_base",
+  ]
+}
+
+rtc_library("jitter_buffer_delay") {
+  sources = [
+    "jitter_buffer_delay.cc",
+    "jitter_buffer_delay.h",
+  ]
+  deps = [
+    ":jitter_buffer_delay_interface",
+    "../media:rtc_media_base",
+    "../rtc_base",
+    "../rtc_base:checks",
+    "../rtc_base:refcount",
+    "../rtc_base:safe_minmax",
+  ]
+  absl_deps = [
+    "//third_party/abseil-cpp/absl/algorithm:container",
+    "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/types:optional",
+  ]
+}
+
+rtc_library("remote_audio_source") {
+  sources = [
+    "remote_audio_source.cc",
+    "remote_audio_source.h",
+  ]
+  deps = [
+    ":rtc_pc_base",
+    "../api:call_api",
+    "../api:media_stream_interface",
+    "../api:scoped_refptr",
+    "../rtc_base",
+    "../rtc_base:checks",
+    "../rtc_base:logging",
+    "../rtc_base:rtc_base_approved",
+    "../rtc_base:safe_conversions",
+    "../rtc_base:stringutils",
+    "../rtc_base/synchronization:mutex",
+  ]
+  absl_deps = [
+    "//third_party/abseil-cpp/absl/algorithm:container",
+    "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/types:optional",
+  ]
+}
+
 rtc_library("rtp_sender") {
   sources = [
     "rtp_sender.cc",
@@ -349,6 +565,28 @@ rtc_library("rtp_sender") {
     "../rtc_base:checks",
     "../rtc_base:rtc_base",
     "../rtc_base/synchronization:mutex",
+  ]
+  absl_deps = [
+    "//third_party/abseil-cpp/absl/algorithm:container",
+    "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/types:optional",
+  ]
+}
+
+rtc_library("rtp_parameters_conversion") {
+  sources = [
+    "rtp_parameters_conversion.cc",
+    "rtp_parameters_conversion.h",
+  ]
+  deps = [
+    ":rtc_pc_base",
+    "../api:array_view",
+    "../api:libjingle_peerconnection_api",
+    "../api:rtc_error",
+    "../api:rtp_parameters",
+    "../media:rtc_media_base",
+    "../rtc_base:checks",
+    "../rtc_base:rtc_base",
   ]
   absl_deps = [
     "//third_party/abseil-cpp/absl/algorithm:container",
@@ -464,6 +702,7 @@ if (rtc_include_tests) {
       ":peerconnection",
       ":rtc_pc",
       ":rtc_pc_base",
+      ":video_rtp_receiver",
       "../api:array_view",
       "../api:audio_options_api",
       "../api:ice_transport_factory",
@@ -592,6 +831,8 @@ if (rtc_include_tests) {
     ]
 
     deps = [
+      ":jitter_buffer_delay",
+      ":jitter_buffer_delay_interface",
       ":libjingle_peerconnection",
       ":peerconnection",
       ":rtc_pc_base",
@@ -695,12 +936,23 @@ if (rtc_include_tests) {
     }
 
     deps = [
+      ":audio_rtp_receiver",
+      ":audio_track",
       ":dtmf_sender",
+      ":jitter_buffer_delay",
+      ":jitter_buffer_delay_interface",
       ":media_stream",
       ":peerconnection",
+      ":remote_audio_source",
       ":rtc_pc_base",
+      ":rtp_parameters_conversion",
       ":rtp_receiver",
       ":rtp_sender",
+      ":rtp_transceiver",
+      ":usage_pattern",
+      ":video_rtp_receiver",
+      ":video_rtp_track_source",
+      ":video_track",
       ":video_track_source",
       "../api:array_view",
       "../api:audio_options_api",

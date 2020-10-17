@@ -22,6 +22,7 @@
 #include "api/peer_connection_interface.h"
 #include "api/transport/data_channel_transport_interface.h"
 #include "api/turn_customizer.h"
+#include "pc/connection_context.h"
 #include "pc/data_channel_controller.h"
 #include "pc/ice_server_parsing.h"
 #include "pc/jsep_transport_controller.h"
@@ -36,6 +37,7 @@
 #include "pc/stats_collector.h"
 #include "pc/stream_collection.h"
 #include "pc/transceiver_list.h"
+#include "pc/usage_pattern.h"
 #include "pc/webrtc_session_description_factory.h"
 #include "rtc_base/experiments/field_trial_parser.h"
 #include "rtc_base/operations_chain.h"
@@ -70,54 +72,7 @@ class PeerConnection : public PeerConnectionInternal,
                        public RtpSenderBase::SetStreamsObserver,
                        public sigslot::has_slots<> {
  public:
-  // A bit in the usage pattern is registered when its defining event occurs at
-  // least once.
-  enum class UsageEvent : int {
-    TURN_SERVER_ADDED = 0x01,
-    STUN_SERVER_ADDED = 0x02,
-    DATA_ADDED = 0x04,
-    AUDIO_ADDED = 0x08,
-    VIDEO_ADDED = 0x10,
-    // |SetLocalDescription| returns successfully.
-    SET_LOCAL_DESCRIPTION_SUCCEEDED = 0x20,
-    // |SetRemoteDescription| returns successfully.
-    SET_REMOTE_DESCRIPTION_SUCCEEDED = 0x40,
-    // A local candidate (with type host, server-reflexive, or relay) is
-    // collected.
-    CANDIDATE_COLLECTED = 0x80,
-    // A remote candidate is successfully added via |AddIceCandidate|.
-    ADD_ICE_CANDIDATE_SUCCEEDED = 0x100,
-    ICE_STATE_CONNECTED = 0x200,
-    CLOSE_CALLED = 0x400,
-    // A local candidate with private IP is collected.
-    PRIVATE_CANDIDATE_COLLECTED = 0x800,
-    // A remote candidate with private IP is added, either via AddiceCandidate
-    // or from the remote description.
-    REMOTE_PRIVATE_CANDIDATE_ADDED = 0x1000,
-    // A local mDNS candidate is collected.
-    MDNS_CANDIDATE_COLLECTED = 0x2000,
-    // A remote mDNS candidate is added, either via AddIceCandidate or from the
-    // remote description.
-    REMOTE_MDNS_CANDIDATE_ADDED = 0x4000,
-    // A local candidate with IPv6 address is collected.
-    IPV6_CANDIDATE_COLLECTED = 0x8000,
-    // A remote candidate with IPv6 address is added, either via AddIceCandidate
-    // or from the remote description.
-    REMOTE_IPV6_CANDIDATE_ADDED = 0x10000,
-    // A remote candidate (with type host, server-reflexive, or relay) is
-    // successfully added, either via AddIceCandidate or from the remote
-    // description.
-    REMOTE_CANDIDATE_ADDED = 0x20000,
-    // An explicit host-host candidate pair is selected, i.e. both the local and
-    // the remote candidates have the host type. This does not include candidate
-    // pairs formed with equivalent prflx remote candidates, e.g. a host-prflx
-    // pair where the prflx candidate has the same base as a host candidate of
-    // the remote peer.
-    DIRECT_CONNECTION_SELECTED = 0x40000,
-    MAX_VALUE = 0x80000,
-  };
-
-  explicit PeerConnection(PeerConnectionFactory* factory,
+  explicit PeerConnection(rtc::scoped_refptr<ConnectionContext> context,
                           std::unique_ptr<RtcEventLog> event_log,
                           std::unique_ptr<Call> call);
 
@@ -152,13 +107,15 @@ class PeerConnection : public PeerConnectionInternal,
   // remote side. This will become populated once the DTLS connection with the
   // peer has been completed, as indicated by the ICE connection state
   // transitioning to kIceConnectionCompleted.
-  // Note that this will be removed once we implement RTCDtlsTransport which
-  // has standardized method for getting this information.
+  // Deprecated - users should insted query the DTLS transpport for this info.
   // See https://www.w3.org/TR/webrtc/#rtcdtlstransport-interface
-  std::unique_ptr<rtc::SSLCertificate> GetRemoteAudioSSLCertificate();
+
+  RTC_DEPRECATED std::unique_ptr<rtc::SSLCertificate>
+  GetRemoteAudioSSLCertificate();
 
   // Version of the above method that returns the full certificate chain.
-  std::unique_ptr<rtc::SSLCertChain> GetRemoteAudioSSLCertChain();
+  RTC_DEPRECATED std::unique_ptr<rtc::SSLCertChain>
+  GetRemoteAudioSSLCertChain();
 
   rtc::scoped_refptr<RtpSenderInterface> CreateSender(
       const std::string& kind,
@@ -266,14 +223,14 @@ class PeerConnection : public PeerConnectionInternal,
   void Close() override;
 
   rtc::Thread* signaling_thread() const final {
-    return factory_->signaling_thread();
+    return context_->signaling_thread();
   }
 
   // PeerConnectionInternal implementation.
   rtc::Thread* network_thread() const final {
-    return factory_->network_thread();
+    return context_->network_thread();
   }
-  rtc::Thread* worker_thread() const final { return factory_->worker_thread(); }
+  rtc::Thread* worker_thread() const final { return context_->worker_thread(); }
 
   std::string session_id() const override {
     RTC_DCHECK_RUN_ON(signaling_thread());
@@ -355,10 +312,6 @@ class PeerConnection : public PeerConnectionInternal,
     RTC_DCHECK_RUN_ON(signaling_thread());
     return &configuration_;
   }
-  rtc::scoped_refptr<StreamCollection> remote_streams_internal() const {
-    RTC_DCHECK_RUN_ON(signaling_thread());
-    return remote_streams_;
-  }
   absl::optional<std::string> sctp_mid() {
     RTC_DCHECK_RUN_ON(signaling_thread());
     return sctp_mid_s_;
@@ -435,16 +388,12 @@ class PeerConnection : public PeerConnectionInternal,
 
   // May be called either by AddStream/RemoveStream, or when a track is
   // added/removed from a stream previously added via AddStream.
-  void AddAudioTrack(AudioTrackInterface* track, MediaStreamInterface* stream)
-      RTC_RUN_ON(signaling_thread());
+  void AddAudioTrack(AudioTrackInterface* track, MediaStreamInterface* stream);
   void RemoveAudioTrack(AudioTrackInterface* track,
-                        MediaStreamInterface* stream)
-      RTC_RUN_ON(signaling_thread());
-  void AddVideoTrack(VideoTrackInterface* track, MediaStreamInterface* stream)
-      RTC_RUN_ON(signaling_thread());
+                        MediaStreamInterface* stream);
+  void AddVideoTrack(VideoTrackInterface* track, MediaStreamInterface* stream);
   void RemoveVideoTrack(VideoTrackInterface* track,
-                        MediaStreamInterface* stream)
-      RTC_RUN_ON(signaling_thread());
+                        MediaStreamInterface* stream);
 
   // AddTrack implementation when Unified Plan is specified.
   RTCErrorOr<rtc::scoped_refptr<RtpSenderInterface>> AddTrackUnifiedPlan(
@@ -549,12 +498,14 @@ class PeerConnection : public PeerConnectionInternal,
   // session description. It creates a remote MediaStreamTrackInterface
   // implementation and triggers CreateAudioReceiver or CreateVideoReceiver.
   void OnRemoteSenderAdded(const RtpSenderInfo& sender_info,
+                           MediaStreamInterface* stream,
                            cricket::MediaType media_type);
 
   // Triggered when a remote sender has been removed from a remote session
   // description. It removes the remote sender with id |sender_id| from a remote
   // MediaStream and triggers DestroyAudioReceiver or DestroyVideoReceiver.
   void OnRemoteSenderRemoved(const RtpSenderInfo& sender_info,
+                             MediaStreamInterface* stream,
                              cricket::MediaType media_type);
 
   // Triggered when a local sender has been seen for the first time in a local
@@ -769,7 +720,7 @@ class PeerConnection : public PeerConnectionInternal,
   // However, since the reference counting is done in the
   // PeerConnectionFactoryInterface all instances created using the raw pointer
   // will refer to the same reference count.
-  const rtc::scoped_refptr<PeerConnectionFactory> factory_;
+  const rtc::scoped_refptr<ConnectionContext> context_;
   PeerConnectionObserver* observer_ RTC_GUARDED_BY(signaling_thread()) =
       nullptr;
 
@@ -809,16 +760,6 @@ class PeerConnection : public PeerConnectionInternal,
   std::unique_ptr<rtc::SSLCertificateVerifier>
       tls_cert_verifier_;  // TODO(bugs.webrtc.org/9987): Accessed on both
                            // signaling and network thread.
-
-  // Streams added via AddStream.
-  const rtc::scoped_refptr<StreamCollection> local_streams_
-      RTC_GUARDED_BY(signaling_thread());
-  // Streams created as a result of SetRemoteDescription.
-  const rtc::scoped_refptr<StreamCollection> remote_streams_
-      RTC_GUARDED_BY(signaling_thread());
-
-  std::vector<std::unique_ptr<MediaStreamObserver>> stream_observers_
-      RTC_GUARDED_BY(signaling_thread());
 
   // These lists store sender info seen in local/remote descriptions.
   std::vector<RtpSenderInfo> remote_audio_sender_infos_
@@ -873,7 +814,7 @@ class PeerConnection : public PeerConnectionInternal,
   cricket::AudioOptions audio_options_ RTC_GUARDED_BY(signaling_thread());
   cricket::VideoOptions video_options_ RTC_GUARDED_BY(signaling_thread());
 
-  int usage_event_accumulator_ RTC_GUARDED_BY(signaling_thread()) = 0;
+  UsagePattern usage_pattern_ RTC_GUARDED_BY(signaling_thread());
   bool return_histogram_very_quickly_ RTC_GUARDED_BY(signaling_thread()) =
       false;
 

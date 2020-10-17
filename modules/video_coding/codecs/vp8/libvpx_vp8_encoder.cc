@@ -1018,11 +1018,30 @@ int LibvpxVp8Encoder::Encode(const VideoFrame& frame,
   }
 
   rtc::scoped_refptr<VideoFrameBuffer> input_image = frame.video_frame_buffer();
-  if (input_image->type() != VideoFrameBuffer::Type::kI420 &&
-      input_image->type() != VideoFrameBuffer::Type::kNV12) {
-    input_image = input_image->ToI420();
+  // Since we are extracting raw pointers from |input_image| to
+  // |raw_images_[0]|, the resolution of these frames must match.
+  RTC_DCHECK_EQ(input_image->width(), raw_images_[0].d_w);
+  RTC_DCHECK_EQ(input_image->height(), raw_images_[0].d_h);
+  switch (input_image->type()) {
+    case VideoFrameBuffer::Type::kI420:
+      PrepareI420Image(input_image->GetI420());
+      break;
+    case VideoFrameBuffer::Type::kNV12:
+      PrepareNV12Image(input_image->GetNV12());
+      break;
+    default: {
+      rtc::scoped_refptr<I420BufferInterface> i420_image =
+          input_image->ToI420();
+      if (!i420_image) {
+        RTC_LOG(LS_ERROR) << "Failed to convert "
+                          << VideoFrameBufferTypeToString(input_image->type())
+                          << " image to I420. Can't encode frame.";
+        return WEBRTC_VIDEO_CODEC_ERROR;
+      }
+      input_image = i420_image;
+      PrepareI420Image(i420_image);
+    }
   }
-  PrepareRawImagesForEncoding(input_image);
   struct CleanUpOnExit {
     explicit CleanUpOnExit(vpx_image_t& raw_image) : raw_image_(raw_image) {}
     ~CleanUpOnExit() {
@@ -1244,6 +1263,8 @@ VideoEncoder::EncoderInfo LibvpxVp8Encoder::GetEncoderInfo() const {
     info.scaling_settings.min_pixels_per_frame =
         rate_control_settings_.LibvpxVp8MinPixels().value();
   }
+  info.preferred_pixel_formats = {VideoFrameBuffer::Type::kI420,
+                                  VideoFrameBuffer::Type::kNV12};
 
   if (inited_) {
     // |encoder_idx| is libvpx index where 0 is highest resolution.
@@ -1280,22 +1301,6 @@ int LibvpxVp8Encoder::RegisterEncodeCompleteCallback(
     EncodedImageCallback* callback) {
   encoded_complete_callback_ = callback;
   return WEBRTC_VIDEO_CODEC_OK;
-}
-
-void LibvpxVp8Encoder::PrepareRawImagesForEncoding(
-    const rtc::scoped_refptr<VideoFrameBuffer>& frame) {
-  // Since we are extracting raw pointers from |input_image| to
-  // |raw_images_[0]|, the resolution of these frames must match.
-  RTC_DCHECK_EQ(frame->width(), raw_images_[0].d_w);
-  RTC_DCHECK_EQ(frame->height(), raw_images_[0].d_h);
-  switch (frame->type()) {
-    case VideoFrameBuffer::Type::kI420:
-      return PrepareI420Image(frame->GetI420());
-    case VideoFrameBuffer::Type::kNV12:
-      return PrepareNV12Image(frame->GetNV12());
-    default:
-      RTC_NOTREACHED();
-  }
 }
 
 void LibvpxVp8Encoder::MaybeUpdatePixelFormat(vpx_img_fmt fmt) {
@@ -1377,7 +1382,6 @@ void LibvpxVp8Encoder::PrepareNV12Image(const NV12BufferInterface* frame) {
         raw_images_[i].stride[VPX_PLANE_U], raw_images_[i].d_w,
         raw_images_[i].d_h, libyuv::kFilterBilinear);
     raw_images_[i].planes[VPX_PLANE_V] = raw_images_[i].planes[VPX_PLANE_U] + 1;
-    raw_images_[i].stride[VPX_PLANE_V] = raw_images_[i].stride[VPX_PLANE_U] + 1;
   }
 }
 

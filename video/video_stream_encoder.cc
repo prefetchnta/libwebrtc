@@ -198,6 +198,73 @@ VideoBitrateAllocation UpdateAllocationFromEncoderInfo(
   return new_allocation;
 }
 
+// Converts a VideoBitrateAllocation that contains allocated bitrate per layer,
+// and an EncoderInfo that contains information about the actual encoder
+// structure used by a codec. Stream structures can be Ksvc, Full SVC, Simulcast
+// etc.
+VideoLayersAllocation CreateVideoLayersAllocation(
+    const VideoCodec& encoder_config,
+    const VideoEncoder::RateControlParameters& current_rate,
+    const VideoEncoder::EncoderInfo& encoder_info) {
+  const VideoBitrateAllocation& target_bitrate = current_rate.target_bitrate;
+  VideoLayersAllocation layers_allocation;
+  if (target_bitrate.get_sum_bps() == 0) {
+    return layers_allocation;
+  }
+
+  if (encoder_config.numberOfSimulcastStreams > 0) {
+    layers_allocation.resolution_and_frame_rate_is_valid = true;
+    for (int si = 0; si < encoder_config.numberOfSimulcastStreams; ++si) {
+      if (!target_bitrate.IsSpatialLayerUsed(si) ||
+          target_bitrate.GetSpatialLayerSum(si) == 0) {
+        break;
+      }
+      layers_allocation.active_spatial_layers.emplace_back();
+      VideoLayersAllocation::SpatialLayer& spatial_layer =
+          layers_allocation.active_spatial_layers.back();
+      spatial_layer.width = encoder_config.simulcastStream[si].width;
+      spatial_layer.height = encoder_config.simulcastStream[si].height;
+      spatial_layer.rtp_stream_index = si;
+      spatial_layer.spatial_id = 0;
+      auto frame_rate_fraction =
+          VideoEncoder::EncoderInfo::kMaxFramerateFraction;
+      if (encoder_info.fps_allocation[si].size() == 1) {
+        // One TL is signalled to be used by the encoder. Do not distribute
+        // bitrate allocation across TLs (use sum at tl:0).
+        spatial_layer.target_bitrate_per_temporal_layer.push_back(
+            DataRate::BitsPerSec(target_bitrate.GetSpatialLayerSum(si)));
+        frame_rate_fraction = encoder_info.fps_allocation[si][0];
+      } else {  // Temporal layers are supported.
+        uint32_t temporal_layer_bitrate_bps = 0;
+        for (size_t ti = 0;
+             ti < encoder_config.simulcastStream[si].numberOfTemporalLayers;
+             ++ti) {
+          if (!target_bitrate.HasBitrate(si, ti)) {
+            break;
+          }
+          if (ti < encoder_info.fps_allocation[si].size()) {
+            // Use frame rate of the top used temporal layer.
+            frame_rate_fraction = encoder_info.fps_allocation[si][ti];
+          }
+          temporal_layer_bitrate_bps += target_bitrate.GetBitrate(si, ti);
+          spatial_layer.target_bitrate_per_temporal_layer.push_back(
+              DataRate::BitsPerSec(temporal_layer_bitrate_bps));
+        }
+      }
+      // Encoder may drop frames internally if `maxFramerate` is set.
+      spatial_layer.frame_rate_fps = std::min(
+          static_cast<uint8_t>(encoder_config.simulcastStream[si].maxFramerate),
+          static_cast<uint8_t>(
+              (current_rate.framerate_fps * frame_rate_fraction) /
+              VideoEncoder::EncoderInfo::kMaxFramerateFraction));
+    }
+  } else {
+    // TODO(bugs.webrtc.org/12000): Implement support for kSVC and full SVC.
+  }
+
+  return layers_allocation;
+}
+
 }  //  namespace
 
 VideoStreamEncoder::EncoderRateSettings::EncoderRateSettings()
@@ -1124,6 +1191,12 @@ void VideoStreamEncoder::SetEncoderRates(
         rate_settings.rate_control.bitrate,
         static_cast<uint32_t>(rate_settings.rate_control.framerate_fps + 0.5));
     stream_resource_manager_.SetEncoderRates(rate_settings.rate_control);
+    if (settings_.allocation_cb_type ==
+        VideoStreamEncoderSettings::BitrateAllocationCallbackType::
+            kVideoLayersAllocation) {
+      sink_->OnVideoLayersAllocationUpdated(CreateVideoLayersAllocation(
+          send_codec_, rate_settings.rate_control, encoder_->GetEncoderInfo()));
+    }
   }
   if ((settings_.allocation_cb_type ==
        VideoStreamEncoderSettings::BitrateAllocationCallbackType::
@@ -1312,10 +1385,19 @@ void VideoStreamEncoder::EncodeVideoFrame(const VideoFrame& video_frame,
           VideoFrameBuffer::Type::kNative &&
       !info.supports_native_handle) {
     // This module only supports software encoding.
-    rtc::scoped_refptr<I420BufferInterface> converted_buffer(
-        out_frame.video_frame_buffer()->ToI420());
-
-    if (!converted_buffer) {
+    rtc::scoped_refptr<VideoFrameBuffer> buffer =
+        out_frame.video_frame_buffer()->GetMappedFrameBuffer(
+            info.preferred_pixel_formats);
+    bool buffer_was_converted = false;
+    if (!buffer) {
+      buffer = out_frame.video_frame_buffer()->ToI420();
+      // TODO(https://crbug.com/webrtc/12021): Once GetI420 is pure virtual,
+      // this just true as an I420 buffer would return from
+      // GetMappedFrameBuffer.
+      buffer_was_converted =
+          (out_frame.video_frame_buffer()->GetI420() == nullptr);
+    }
+    if (!buffer) {
       RTC_LOG(LS_ERROR) << "Frame conversion failed, dropping frame.";
       return;
     }
@@ -1329,8 +1411,7 @@ void VideoStreamEncoder::EncodeVideoFrame(const VideoFrame& video_frame,
       update_rect =
           VideoFrame::UpdateRect{0, 0, out_frame.width(), out_frame.height()};
     }
-
-    out_frame.set_video_frame_buffer(converted_buffer);
+    out_frame.set_video_frame_buffer(buffer);
     out_frame.set_update_rect(update_rect);
   }
 
@@ -1339,29 +1420,24 @@ void VideoStreamEncoder::EncodeVideoFrame(const VideoFrame& video_frame,
       out_frame.video_frame_buffer()->type() !=
           VideoFrameBuffer::Type::kNative) {
     // If the frame can't be converted to I420, drop it.
-    auto i420_buffer = video_frame.video_frame_buffer()->ToI420();
-    if (!i420_buffer) {
-      RTC_LOG(LS_ERROR) << "Frame conversion for crop failed, dropping frame.";
-      return;
-    }
     int cropped_width = video_frame.width() - crop_width_;
     int cropped_height = video_frame.height() - crop_height_;
-    rtc::scoped_refptr<I420Buffer> cropped_buffer =
-        I420Buffer::Create(cropped_width, cropped_height);
+    rtc::scoped_refptr<VideoFrameBuffer> cropped_buffer;
     // TODO(ilnik): Remove scaling if cropping is too big, as it should never
     // happen after SinkWants signaled correctly from ReconfigureEncoder.
     VideoFrame::UpdateRect update_rect = video_frame.update_rect();
     if (crop_width_ < 4 && crop_height_ < 4) {
-      cropped_buffer->CropAndScaleFrom(*i420_buffer, crop_width_ / 2,
-                                       crop_height_ / 2, cropped_width,
-                                       cropped_height);
+      cropped_buffer = video_frame.video_frame_buffer()->CropAndScale(
+          crop_width_ / 2, crop_height_ / 2, cropped_width, cropped_height,
+          cropped_width, cropped_height);
       update_rect.offset_x -= crop_width_ / 2;
       update_rect.offset_y -= crop_height_ / 2;
       update_rect.Intersect(
           VideoFrame::UpdateRect{0, 0, cropped_width, cropped_height});
 
     } else {
-      cropped_buffer->ScaleFrom(*i420_buffer);
+      cropped_buffer = video_frame.video_frame_buffer()->Scale(cropped_width,
+                                                               cropped_height);
       if (!update_rect.IsEmpty()) {
         // Since we can't reason about pixels after scaling, we invalidate whole
         // picture, if anything changed.
@@ -1369,6 +1445,11 @@ void VideoStreamEncoder::EncodeVideoFrame(const VideoFrame& video_frame,
             VideoFrame::UpdateRect{0, 0, cropped_width, cropped_height};
       }
     }
+    if (!cropped_buffer) {
+      RTC_LOG(LS_ERROR) << "Cropping and scaling frame failed, dropping frame.";
+      return;
+    }
+
     out_frame.set_video_frame_buffer(cropped_buffer);
     out_frame.set_update_rect(update_rect);
     out_frame.set_ntp_time_ms(video_frame.ntp_time_ms());
