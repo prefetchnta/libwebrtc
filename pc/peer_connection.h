@@ -118,11 +118,16 @@ class PeerConnection : public PeerConnectionInternal,
                        public JsepTransportController::Observer,
                        public sigslot::has_slots<> {
  public:
-  explicit PeerConnection(rtc::scoped_refptr<ConnectionContext> context,
-                          std::unique_ptr<RtcEventLog> event_log,
-                          std::unique_ptr<Call> call);
-
-  bool Initialize(
+  // Creates a PeerConnection and initializes it with the given values.
+  // If the initialization fails, the function releases the PeerConnection
+  // and returns nullptr.
+  //
+  // Note that the function takes ownership of dependencies, and will
+  // either use them or release them, whether it succeeds or fails.
+  static rtc::scoped_refptr<PeerConnection> Create(
+      rtc::scoped_refptr<ConnectionContext> context,
+      std::unique_ptr<RtcEventLog> event_log,
+      std::unique_ptr<Call> call,
       const PeerConnectionInterface::RTCConfiguration& configuration,
       PeerConnectionDependencies dependencies);
 
@@ -148,20 +153,6 @@ class PeerConnection : public PeerConnectionInternal,
   RTCErrorOr<rtc::scoped_refptr<RtpTransceiverInterface>> AddTransceiver(
       cricket::MediaType media_type,
       const RtpTransceiverInit& init) override;
-
-  // Gets the DTLS SSL certificate associated with the audio transport on the
-  // remote side. This will become populated once the DTLS connection with the
-  // peer has been completed, as indicated by the ICE connection state
-  // transitioning to kIceConnectionCompleted.
-  // Deprecated - users should insted query the DTLS transpport for this info.
-  // See https://www.w3.org/TR/webrtc/#rtcdtlstransport-interface
-
-  RTC_DEPRECATED std::unique_ptr<rtc::SSLCertificate>
-  GetRemoteAudioSSLCertificate();
-
-  // Version of the above method that returns the full certificate chain.
-  RTC_DEPRECATED std::unique_ptr<rtc::SSLCertChain>
-  GetRemoteAudioSSLCertChain();
 
   rtc::scoped_refptr<RtpSenderInterface> CreateSender(
       const std::string& kind,
@@ -332,7 +323,7 @@ class PeerConnection : public PeerConnectionInternal,
   PeerConnectionObserver* Observer() const;
   bool IsClosed() const {
     RTC_DCHECK_RUN_ON(signaling_thread());
-    return sdp_handler_.signaling_state() == PeerConnectionInterface::kClosed;
+    return sdp_handler_->signaling_state() == PeerConnectionInterface::kClosed;
   }
   // Get current SSL role used by SCTP's underlying transport.
   bool GetSctpSslRole(rtc::SSLRole* role);
@@ -396,7 +387,7 @@ class PeerConnection : public PeerConnectionInternal,
   // sufficient time has passed.
   bool IsUnifiedPlan() const {
     RTC_DCHECK_RUN_ON(signaling_thread());
-    return configuration_.sdp_semantics == SdpSemantics::kUnifiedPlan;
+    return is_unified_plan_;
   }
   bool ValidateBundleSettings(const cricket::SessionDescription* desc);
 
@@ -454,9 +445,20 @@ class PeerConnection : public PeerConnectionInternal,
   void RequestUsagePatternReportForTesting();
 
  protected:
+  // Available for rtc::scoped_refptr creation
+  explicit PeerConnection(rtc::scoped_refptr<ConnectionContext> context,
+                          bool is_unified_plan,
+                          std::unique_ptr<RtcEventLog> event_log,
+                          std::unique_ptr<Call> call,
+                          PeerConnectionDependencies& dependencies);
+
   ~PeerConnection() override;
 
  private:
+  bool Initialize(
+      const PeerConnectionInterface::RTCConfiguration& configuration,
+      PeerConnectionDependencies dependencies);
+
   rtc::scoped_refptr<RtpTransceiverProxyWithInternal<RtpTransceiver>>
   FindTransceiverBySender(rtc::scoped_refptr<RtpSenderInterface> sender)
       RTC_RUN_ON(signaling_thread());
@@ -527,16 +529,6 @@ class PeerConnection : public PeerConnectionInternal,
   // This function should only be called from the worker thread.
   void StopRtcEventLog_w();
 
-  // Ensures the configuration doesn't have any parameters with invalid values,
-  // or values that conflict with other parameters.
-  //
-  // Returns RTCError::OK() if there are no issues.
-  RTCError ValidateConfiguration(const RTCConfiguration& config) const;
-
-  cricket::IceConfig ParseIceConfig(
-      const PeerConnectionInterface::RTCConfiguration& config) const;
-
-
   // Returns true and the TransportInfo of the given |content_name|
   // from |description|. Returns false if it's not available.
   static bool GetTransportDescription(
@@ -550,12 +542,6 @@ class PeerConnection : public PeerConnectionInternal,
   bool GetLocalCandidateMediaIndex(const std::string& content_name,
                                    int* sdp_mline_index)
       RTC_RUN_ON(signaling_thread());
-
-  bool HasRtcpMuxEnabled(const cricket::ContentInfo* content);
-
-  // Verifies a=setup attribute as per RFC 5763.
-  bool ValidateDtlsSetupAttribute(const cricket::SessionDescription* desc,
-                                  SdpType type);
 
   // JsepTransportController signal handlers.
   void OnTransportControllerConnectionState(cricket::IceConnectionState state)
@@ -608,15 +594,11 @@ class PeerConnection : public PeerConnectionInternal,
                      int64_t packet_time_us)>
   InitializeRtcpCallback();
 
-  // Storing the factory as a scoped reference pointer ensures that the memory
-  // in the PeerConnectionFactoryImpl remains available as long as the
-  // PeerConnection is running. It is passed to PeerConnection as a raw pointer.
-  // However, since the reference counting is done in the
-  // PeerConnectionFactoryInterface all instances created using the raw pointer
-  // will refer to the same reference count.
   const rtc::scoped_refptr<ConnectionContext> context_;
   PeerConnectionObserver* observer_ RTC_GUARDED_BY(signaling_thread()) =
       nullptr;
+
+  const bool is_unified_plan_;
 
   // The EventLog needs to outlive |call_| (and any other object that uses it).
   std::unique_ptr<RtcEventLog> event_log_ RTC_GUARDED_BY(worker_thread());
@@ -639,18 +621,18 @@ class PeerConnection : public PeerConnectionInternal,
 
   // TODO(zstein): |async_resolver_factory_| can currently be nullptr if it
   // is not injected. It should be required once chromium supplies it.
-  std::unique_ptr<AsyncResolverFactory> async_resolver_factory_
+  const std::unique_ptr<AsyncResolverFactory> async_resolver_factory_
       RTC_GUARDED_BY(signaling_thread());
   std::unique_ptr<cricket::PortAllocator>
       port_allocator_;  // TODO(bugs.webrtc.org/9987): Accessed on both
                         // signaling and network thread.
-  std::unique_ptr<webrtc::IceTransportFactory>
+  const std::unique_ptr<webrtc::IceTransportFactory>
       ice_transport_factory_;  // TODO(bugs.webrtc.org/9987): Accessed on the
                                // signaling thread but the underlying raw
                                // pointer is given to
                                // |jsep_transport_controller_| and used on the
                                // network thread.
-  std::unique_ptr<rtc::SSLCertificateVerifier>
+  const std::unique_ptr<rtc::SSLCertificateVerifier>
       tls_cert_verifier_;  // TODO(bugs.webrtc.org/9987): Accessed on both
                            // signaling and network thread.
 
@@ -687,8 +669,9 @@ class PeerConnection : public PeerConnectionInternal,
   absl::optional<std::string> sctp_mid_s_ RTC_GUARDED_BY(signaling_thread());
   absl::optional<std::string> sctp_mid_n_ RTC_GUARDED_BY(network_thread());
 
-  // The machinery for handling offers and answers.
-  SdpOfferAnswerHandler sdp_handler_ RTC_GUARDED_BY(signaling_thread());
+  // The machinery for handling offers and answers. Const after initialization.
+  std::unique_ptr<SdpOfferAnswerHandler> sdp_handler_
+      RTC_GUARDED_BY(signaling_thread());
 
   bool dtls_enabled_ RTC_GUARDED_BY(signaling_thread()) = false;
 

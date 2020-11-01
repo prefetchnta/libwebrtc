@@ -16,6 +16,7 @@
 #include <numeric>
 
 #include "rtc_base/checks.h"
+#include "rtc_base/numerics/safe_compare.h"
 
 namespace webrtc {
 namespace rnn_vad {
@@ -27,9 +28,9 @@ namespace {
 void ComputeAutoCorrelation(
     rtc::ArrayView<const float> x,
     rtc::ArrayView<float, kNumLpcCoefficients> auto_corr) {
-  constexpr size_t max_lag = auto_corr.size();
+  constexpr int max_lag = auto_corr.size();
   RTC_DCHECK_LT(max_lag, x.size());
-  for (size_t lag = 0; lag < max_lag; ++lag) {
+  for (int lag = 0; lag < max_lag; ++lag) {
     auto_corr[lag] =
         std::inner_product(x.begin(), x.end() - lag, x.begin() + lag, 0.f);
   }
@@ -40,9 +41,13 @@ void DenoiseAutoCorrelation(
     rtc::ArrayView<float, kNumLpcCoefficients> auto_corr) {
   // Assume -40 dB white noise floor.
   auto_corr[0] *= 1.0001f;
-  for (size_t i = 1; i < kNumLpcCoefficients; ++i) {
-    auto_corr[i] -= auto_corr[i] * (0.008f * i) * (0.008f * i);
-  }
+  // Hard-coded values obtained as
+  // [np.float32((0.008*0.008*i*i)) for i in range(1,5)].
+  auto_corr[1] -= auto_corr[1] * 0.000064f;
+  auto_corr[2] -= auto_corr[2] * 0.000256f;
+  auto_corr[3] -= auto_corr[3] * 0.000576f;
+  auto_corr[4] -= auto_corr[4] * 0.001024f;
+  static_assert(kNumLpcCoefficients == 5, "Update `auto_corr`.");
 }
 
 // Computes the initial inverse filter coefficients given the auto-correlation
@@ -51,9 +56,9 @@ void ComputeInitialInverseFilterCoefficients(
     rtc::ArrayView<const float, kNumLpcCoefficients> auto_corr,
     rtc::ArrayView<float, kNumLpcCoefficients - 1> lpc_coeffs) {
   float error = auto_corr[0];
-  for (size_t i = 0; i < kNumLpcCoefficients - 1; ++i) {
+  for (int i = 0; i < kNumLpcCoefficients - 1; ++i) {
     float reflection_coeff = 0.f;
-    for (size_t j = 0; j < i; ++j) {
+    for (int j = 0; j < i; ++j) {
       reflection_coeff += lpc_coeffs[j] * auto_corr[i - j];
     }
     reflection_coeff += auto_corr[i + 1];
@@ -67,7 +72,7 @@ void ComputeInitialInverseFilterCoefficients(
     reflection_coeff /= -error;
     // Update LPC coefficients and total error.
     lpc_coeffs[i] = reflection_coeff;
-    for (size_t j = 0; j<(i + 1)>> 1; ++j) {
+    for (int j = 0; j < ((i + 1) >> 1); ++j) {
       const float tmp1 = lpc_coeffs[j];
       const float tmp2 = lpc_coeffs[i - 1 - j];
       lpc_coeffs[j] = tmp1 + reflection_coeff * tmp2;
@@ -113,19 +118,22 @@ void ComputeLpResidual(
     rtc::ArrayView<const float, kNumLpcCoefficients> lpc_coeffs,
     rtc::ArrayView<const float> x,
     rtc::ArrayView<float> y) {
-  RTC_DCHECK_LT(kNumLpcCoefficients, x.size());
+  RTC_DCHECK_GT(x.size(), kNumLpcCoefficients);
   RTC_DCHECK_EQ(x.size(), y.size());
-  std::array<float, kNumLpcCoefficients> input_chunk;
-  input_chunk.fill(0.f);
-  for (size_t i = 0; i < y.size(); ++i) {
-    const float sum = std::inner_product(input_chunk.begin(), input_chunk.end(),
-                                         lpc_coeffs.begin(), x[i]);
-    // Circular shift and add a new sample.
-    for (size_t j = kNumLpcCoefficients - 1; j > 0; --j)
-      input_chunk[j] = input_chunk[j - 1];
-    input_chunk[0] = x[i];
-    // Copy result.
-    y[i] = sum;
+  // The code below implements the following operation:
+  // y[i] = x[i] + dot_product({x[i], ..., x[i - kNumLpcCoefficients + 1]},
+  //                           lpc_coeffs)
+  // Edge case: i < kNumLpcCoefficients.
+  y[0] = x[0];
+  for (int i = 1; i < kNumLpcCoefficients; ++i) {
+    y[i] =
+        std::inner_product(x.crend() - i, x.crend(), lpc_coeffs.cbegin(), x[i]);
+  }
+  // Regular case.
+  auto last = x.crend();
+  for (int i = kNumLpcCoefficients; rtc::SafeLt(i, y.size()); ++i, --last) {
+    y[i] = std::inner_product(last - kNumLpcCoefficients, last,
+                              lpc_coeffs.cbegin(), x[i]);
   }
 }
 
