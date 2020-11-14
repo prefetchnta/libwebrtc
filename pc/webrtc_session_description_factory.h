@@ -37,8 +37,7 @@ namespace webrtc {
 
 // DTLS certificate request callback class.
 class WebRtcCertificateGeneratorCallback
-    : public rtc::RTCCertificateGeneratorCallback,
-      public sigslot::has_slots<> {
+    : public rtc::RTCCertificateGeneratorCallback {
  public:
   // |rtc::RTCCertificateGeneratorCallback| overrides.
   void OnSuccess(
@@ -86,7 +85,9 @@ class WebRtcSessionDescriptionFactory : public rtc::MessageHandler,
       bool dtls_enabled,
       std::unique_ptr<rtc::RTCCertificateGeneratorInterface> cert_generator,
       const rtc::scoped_refptr<rtc::RTCCertificate>& certificate,
-      rtc::UniqueRandomIdGenerator* ssrc_generator);
+      rtc::UniqueRandomIdGenerator* ssrc_generator,
+      std::function<void(const rtc::scoped_refptr<rtc::RTCCertificate>&)>
+          on_certificate_ready);
   virtual ~WebRtcSessionDescriptionFactory();
 
   static void CopyCandidatesFromSessionDescription(
@@ -111,9 +112,6 @@ class WebRtcSessionDescriptionFactory : public rtc::MessageHandler,
   void set_is_unified_plan(bool is_unified_plan) {
     session_desc_factory_.set_is_unified_plan(is_unified_plan);
   }
-
-  sigslot::signal1<const rtc::scoped_refptr<rtc::RTCCertificate>&>
-      SignalCertificateReady;
 
   // For testing.
   bool waiting_for_certificate_for_testing() const {
@@ -156,6 +154,9 @@ class WebRtcSessionDescriptionFactory : public rtc::MessageHandler,
   const SdpStateProvider* sdp_info_;
   const std::string session_id_;
   CertificateRequestState certificate_request_state_;
+
+  std::function<void(const rtc::scoped_refptr<rtc::RTCCertificate>&)>
+      on_certificate_ready_;
 
   RTC_DISALLOW_COPY_AND_ASSIGN(WebRtcSessionDescriptionFactory);
 };

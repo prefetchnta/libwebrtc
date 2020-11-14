@@ -114,7 +114,7 @@ GainControl::Mode Agc1ConfigModeToInterfaceMode(
     case Agc1Config::kFixedDigital:
       return GainControl::kFixedDigital;
   }
-  RTC_CHECK(false);
+  RTC_CHECK_NOTREACHED();
 }
 
 // Maximum lengths that frame of samples being passed from the render side to
@@ -1476,8 +1476,8 @@ bool AudioProcessingImpl::GetLinearAecOutput(
       rtc::ArrayView<const float> channel_view =
           rtc::ArrayView<const float>(linear_aec_buffer->channels_const()[ch],
                                       linear_aec_buffer->num_frames());
-      std::copy(channel_view.begin(), channel_view.end(),
-                linear_output[ch].begin());
+      FloatS16ToFloat(channel_view.data(), channel_view.size(),
+                      linear_output[ch].data());
     }
     return true;
   }
@@ -1830,7 +1830,7 @@ void AudioProcessingImpl::InitializeNoiseSuppressor() {
             case NoiseSuppresionConfig::kVeryHigh:
               return NsConfig::SuppressionLevel::k21dB;
           }
-          RTC_CHECK(false);
+          RTC_CHECK_NOTREACHED();
         };
 
     NsConfig cfg;
