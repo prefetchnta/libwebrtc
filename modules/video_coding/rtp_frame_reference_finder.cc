@@ -11,12 +11,9 @@
 #include "modules/video_coding/rtp_frame_reference_finder.h"
 
 #include <algorithm>
-#include <limits>
 
 #include "absl/base/macros.h"
-#include "absl/types/variant.h"
 #include "modules/video_coding/frame_object.h"
-#include "modules/video_coding/packet_buffer.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
 
@@ -182,7 +179,7 @@ RtpFrameReferenceFinder::ManageFrameGeneric(
     RtpFrameObject* frame,
     const RTPVideoHeader::GenericDescriptorInfo& descriptor) {
   frame->id.picture_id = descriptor.frame_id;
-  frame->id.spatial_layer = descriptor.spatial_index;
+  frame->SetSpatialIndex(descriptor.spatial_index);
 
   if (EncodedFrame::kMaxFrameReferences < descriptor.dependencies.size()) {
     RTC_LOG(LS_WARNING) << "Too many dependencies in generic descriptor.";

@@ -36,6 +36,7 @@
 #include "rtc_base/logging.h"
 #include "rtc_base/third_party/base64/base64.h"
 #include "rtc_base/unique_id_generator.h"
+#include "system_wrappers/include/field_trial.h"
 
 namespace {
 
@@ -335,6 +336,12 @@ static StreamParams CreateStreamParamsForNewSenderWithSsrcs(
         << "Our FlexFEC implementation only supports protecting "
            "a single media streams. This session has multiple "
            "media streams however, so no FlexFEC SSRC will be generated.";
+  }
+  if (include_flexfec_stream &&
+      !webrtc::field_trial::IsEnabled("WebRTC-FlexFEC-03")) {
+    include_flexfec_stream = false;
+    RTC_LOG(LS_WARNING)
+        << "WebRTC-FlexFEC trial is not enabled, not sending FlexFEC";
   }
 
   result.GenerateSsrcs(sender.num_sim_layers, include_rtx_streams,
@@ -1505,8 +1512,11 @@ std::unique_ptr<SessionDescription> MediaSessionDescriptionFactory::CreateOffer(
   AudioCodecs offer_audio_codecs;
   VideoCodecs offer_video_codecs;
   RtpDataCodecs offer_rtp_data_codecs;
-  GetCodecsForOffer(current_active_contents, &offer_audio_codecs,
-                    &offer_video_codecs, &offer_rtp_data_codecs);
+  GetCodecsForOffer(
+      current_active_contents, &offer_audio_codecs, &offer_video_codecs,
+      session_options.data_channel_type == DataChannelType::DCT_SCTP
+          ? nullptr
+          : &offer_rtp_data_codecs);
   if (!session_options.vad_enabled) {
     // If application doesn't want CN codecs in offer.
     StripCNCodecs(&offer_audio_codecs);
@@ -1923,7 +1933,10 @@ void MediaSessionDescriptionFactory::GetCodecsForOffer(
   // Add our codecs that are not in the current description.
   MergeCodecs<AudioCodec>(all_audio_codecs_, audio_codecs, &used_pltypes);
   MergeCodecs<VideoCodec>(all_video_codecs_, video_codecs, &used_pltypes);
-  MergeCodecs<DataCodec>(rtp_data_codecs_, rtp_data_codecs, &used_pltypes);
+  // Only allocate a payload type for rtp datachannels when using rtp data
+  // channels.
+  if (rtp_data_codecs)
+    MergeCodecs<DataCodec>(rtp_data_codecs_, rtp_data_codecs, &used_pltypes);
 }
 
 // Getting codecs for an answer involves these steps:
