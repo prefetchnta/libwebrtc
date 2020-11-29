@@ -238,8 +238,6 @@ class ModuleRtpRtcpImpl : public RtpRtcp, public RTCPReceiver::ModuleRtpRtcp {
   // requests.
   void SetStorePacketsStatus(bool enable, uint16_t number_to_store) override;
 
-  bool StorePackets() const override;
-
   void SendCombinedRtcpPacket(
       std::vector<std::unique_ptr<rtcp::RtcpPacket>> rtcp_packets) override;
 
@@ -251,8 +249,6 @@ class ModuleRtpRtcpImpl : public RtpRtcp, public RTCPReceiver::ModuleRtpRtcp {
 
   // (XR) Receiver reference time report.
   void SetRtcpXrRrtrStatus(bool enable) override;
-
-  bool RtcpXrRrtrStatus() const override;
 
   // Video part.
   int32_t SendLossNotification(uint16_t last_decoded_seq_num,
@@ -326,6 +322,12 @@ class ModuleRtpRtcpImpl : public RtpRtcp, public RTCPReceiver::ModuleRtpRtcp {
 
   bool TimeToSendFullNackList(int64_t now) const;
 
+  // Returns true if the module is configured to store packets.
+  bool StorePackets() const;
+
+  // Returns current Receiver Reference Time Report (RTTR) status.
+  bool RtcpXrRrtrStatus() const;
+
   std::unique_ptr<RtpSenderContext> rtp_sender_;
 
   RTCPSender rtcp_sender_;
@@ -348,7 +350,7 @@ class ModuleRtpRtcpImpl : public RtpRtcp, public RTCPReceiver::ModuleRtpRtcp {
 
   // The processed RTT from RtcpRttStats.
   mutable Mutex mutex_rtt_;
-  int64_t rtt_ms_;
+  int64_t rtt_ms_ RTC_GUARDED_BY(mutex_rtt_);
 };
 
 }  // namespace webrtc

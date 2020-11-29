@@ -42,6 +42,7 @@
 #include "rtc_base/logging.h"
 #include "rtc_base/strings/string_builder.h"
 #include "rtc_base/synchronization/sequence_checker.h"
+#include "rtc_base/system/no_unique_address.h"
 #include "rtc_base/thread_annotations.h"
 #include "rtc_base/trace_event.h"
 #include "system_wrappers/include/field_trial.h"
@@ -347,7 +348,7 @@ class VideoStreamEncoder::DegradationPreferenceManager
     }
   }
 
-  SequenceChecker sequence_checker_;
+  RTC_NO_UNIQUE_ADDRESS SequenceChecker sequence_checker_;
   DegradationPreference degradation_preference_
       RTC_GUARDED_BY(&sequence_checker_);
   bool is_screenshare_ RTC_GUARDED_BY(&sequence_checker_);
@@ -1846,21 +1847,23 @@ void VideoStreamEncoder::OnBitrateUpdated(DataRate target_bitrate,
 }
 
 bool VideoStreamEncoder::DropDueToSize(uint32_t pixel_count) const {
-  bool simulcast_or_svc =
-      (send_codec_.codecType == VideoCodecType::kVideoCodecVP9 &&
-       send_codec_.VP9().numberOfSpatialLayers > 1) ||
-      ((send_codec_.numberOfSimulcastStreams > 1 ||
-        encoder_config_.simulcast_layers.size() > 1) &&
-       !stream_resource_manager_.SingleActiveStreamPixels());
-
-  if (simulcast_or_svc || !stream_resource_manager_.DropInitialFrames() ||
+  if (!stream_resource_manager_.DropInitialFrames() ||
       !encoder_target_bitrate_bps_.has_value()) {
     return false;
   }
 
-  if (send_codec_.numberOfSimulcastStreams > 1 &&
-      stream_resource_manager_.SingleActiveStreamPixels()) {
-    pixel_count = stream_resource_manager_.SingleActiveStreamPixels().value();
+  bool simulcast_or_svc =
+      (send_codec_.codecType == VideoCodecType::kVideoCodecVP9 &&
+       send_codec_.VP9().numberOfSpatialLayers > 1) ||
+      (send_codec_.numberOfSimulcastStreams > 1 ||
+       encoder_config_.simulcast_layers.size() > 1);
+
+  if (simulcast_or_svc) {
+    if (stream_resource_manager_.SingleActiveStreamPixels()) {
+      pixel_count = stream_resource_manager_.SingleActiveStreamPixels().value();
+    } else {
+      return false;
+    }
   }
 
   absl::optional<VideoEncoder::ResolutionBitrateLimits> encoder_bitrate_limits =
