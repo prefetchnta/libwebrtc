@@ -11,6 +11,11 @@ import("//build/config/ui.gni")
 import("//tools/generate_stubs/rules.gni")
 import("../../webrtc.gni")
 
+if (rtc_use_pipewire) {
+  assert(rtc_pipewire_version == "0.2" || rtc_pipewire_version == "0.3",
+         "Unsupported PipeWire version")
+}
+
 use_desktop_capture_differ_sse2 = current_cpu == "x86" || current_cpu == "x64"
 
 config("x11_config") {
@@ -110,6 +115,7 @@ if (rtc_include_tests) {
         "win/cursor_unittest_resources.rc",
         "win/screen_capture_utils_unittest.cc",
         "win/screen_capturer_win_directx_unittest.cc",
+        "win/window_capture_utils_unittest.cc",
       ]
     }
     deps = [
@@ -117,7 +123,12 @@ if (rtc_include_tests) {
       ":desktop_capture_mock",
       ":primitives",
       "../../rtc_base:checks",
+
+      # TODO(bugs.webrtc.org/9987): Remove this dep on rtc_base:rtc_base once
+      # rtc_base:threading is fully defined.
+      "../../rtc_base:rtc_base",
       "../../rtc_base:rtc_base_approved",
+      "../../rtc_base:threading",
       "../../system_wrappers",
       "../../test:test_support",
     ]
@@ -200,22 +211,41 @@ if (is_linux || is_chromeos) {
       ]
     }
 
-    if (rtc_link_pipewire) {
+    if (rtc_pipewire_version == "0.3") {
       pkg_config("pipewire") {
-        packages = [ "libpipewire-0.2" ]
+        packages = [ "libpipewire-0.3" ]
+        if (!rtc_link_pipewire) {
+          ignore_libs = true
+        }
       }
     } else {
+      pkg_config("pipewire") {
+        packages = [ "libpipewire-0.2" ]
+        if (!rtc_link_pipewire) {
+          ignore_libs = true
+        }
+      }
+    }
+
+    if (!rtc_link_pipewire) {
       # When libpipewire is not directly linked, use stubs to allow for dlopening of
       # the binary.
       generate_stubs("pipewire_stubs") {
-        configs = [ "../../:common_config" ]
+        configs = [
+          "../../:common_config",
+          ":pipewire",
+        ]
         deps = [ "../../rtc_base" ]
         extra_header = "linux/pipewire_stub_header.fragment"
         logging_function = "RTC_LOG(LS_VERBOSE)"
         logging_include = "rtc_base/logging.h"
         output_name = "linux/pipewire_stubs"
         path_from_source = "modules/desktop_capture/linux"
-        sigs = [ "linux/pipewire.sigs" ]
+        if (rtc_pipewire_version == "0.3") {
+          sigs = [ "linux/pipewire03.sigs" ]
+        } else {
+          sigs = [ "linux/pipewire02.sigs" ]
+        }
       }
     }
 
@@ -494,6 +524,7 @@ rtc_library("desktop_capture_generic") {
   absl_deps = [
     "//third_party/abseil-cpp/absl/memory",
     "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/types:optional",
   ]
 
   if (rtc_use_x11_extensions) {
@@ -514,20 +545,15 @@ rtc_library("desktop_capture_generic") {
     sources += [
       "linux/base_capturer_pipewire.cc",
       "linux/base_capturer_pipewire.h",
-      "linux/screen_capturer_pipewire.cc",
-      "linux/screen_capturer_pipewire.h",
-      "linux/window_capturer_pipewire.cc",
-      "linux/window_capturer_pipewire.h",
     ]
 
     configs += [
       ":pipewire_config",
       ":gio",
+      ":pipewire",
     ]
 
-    if (rtc_link_pipewire) {
-      configs += [ ":pipewire" ]
-    } else {
+    if (!rtc_link_pipewire) {
       deps += [ ":pipewire_stubs" ]
     }
   }

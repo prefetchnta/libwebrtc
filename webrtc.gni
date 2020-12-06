@@ -117,6 +117,10 @@ declare_args() {
   # Set this to link PipeWire directly instead of using the dlopen.
   rtc_link_pipewire = false
 
+  # Set this to use certain PipeWire version
+  # Currently we support PipeWire 0.2 (default) and PipeWire 0.3
+  rtc_pipewire_version = "0.2"
+
   # Enable to use the Mozilla internal settings.
   build_with_mozilla = false
 
@@ -466,7 +470,7 @@ template("rtc_test") {
     # When not targeting a simulator, building //base/test:google_test_runner
     # fails, so it is added only when the test is not a real XCTest and when
     # targeting a simulator.
-    if (is_ios && target_cpu == "x64") {
+    if (is_ios && target_cpu == "x64" && rtc_include_tests) {
       if (!defined(invoker.is_xctest) || !invoker.is_xctest) {
         xctest_module_target = "//base/test:google_test_runner"
       }
