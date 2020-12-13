@@ -86,14 +86,17 @@ rtc_source_set("rnn_vad_layers") {
   ]
   deps = [
     ":rnn_vad_common",
+    ":vector_math",
     "..:cpu_features",
     "../../../../api:array_view",
     "../../../../api:function_view",
     "../../../../rtc_base:checks",
     "../../../../rtc_base:safe_conversions",
-    "../../../../rtc_base/system:arch",
     "//third_party/rnnoise:rnn_vad",
   ]
+  if (current_cpu == "x86" || current_cpu == "x64") {
+    deps += [ ":vector_math_avx2" ]
+  }
   absl_deps = [ "//third_party/abseil-cpp/absl/strings" ]
 }
 

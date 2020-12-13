@@ -39,7 +39,7 @@ class VoipCoreTest : public ::testing::Test {
     auto encoder_factory = CreateBuiltinAudioEncoderFactory();
     auto decoder_factory = CreateBuiltinAudioDecoderFactory();
     rtc::scoped_refptr<AudioProcessing> audio_processing =
-        new rtc::RefCountedObject<test::MockAudioProcessing>();
+        new rtc::RefCountedObject<NiceMock<test::MockAudioProcessing>>();
 
     auto process_thread = std::make_unique<NiceMock<MockProcessThread>>();
     // Hold the pointer to use for testing.
@@ -70,14 +70,18 @@ TEST_F(VoipCoreTest, BasicVoipCoreOperation) {
 
   auto channel = voip_core_->CreateChannel(&transport_, 0xdeadc0de);
 
-  voip_core_->SetSendCodec(channel, kPcmuPayload, kPcmuFormat);
-  voip_core_->SetReceiveCodecs(channel, {{kPcmuPayload, kPcmuFormat}});
+  EXPECT_EQ(voip_core_->SetSendCodec(channel, kPcmuPayload, kPcmuFormat),
+            VoipResult::kOk);
+  EXPECT_EQ(
+      voip_core_->SetReceiveCodecs(channel, {{kPcmuPayload, kPcmuFormat}}),
+      VoipResult::kOk);
 
   EXPECT_EQ(voip_core_->StartSend(channel), VoipResult::kOk);
   EXPECT_EQ(voip_core_->StartPlayout(channel), VoipResult::kOk);
 
-  voip_core_->RegisterTelephoneEventType(channel, kPcmuPayload,
-                                         kPcmuSampleRateHz);
+  EXPECT_EQ(voip_core_->RegisterTelephoneEventType(channel, kPcmuPayload,
+                                                   kPcmuSampleRateHz),
+            VoipResult::kOk);
 
   EXPECT_EQ(
       voip_core_->SendDtmfEvent(channel, kDtmfEventCode, kDtmfEventDurationMs),
@@ -125,7 +129,8 @@ TEST_F(VoipCoreTest, SendDtmfEventWithoutRegistering) {
 
   auto channel = voip_core_->CreateChannel(&transport_, 0xdeadc0de);
 
-  voip_core_->SetSendCodec(channel, kPcmuPayload, kPcmuFormat);
+  EXPECT_EQ(voip_core_->SetSendCodec(channel, kPcmuPayload, kPcmuFormat),
+            VoipResult::kOk);
 
   EXPECT_EQ(voip_core_->StartSend(channel), VoipResult::kOk);
   // Send Dtmf event without registering beforehand, thus payload
@@ -145,8 +150,10 @@ TEST_F(VoipCoreTest, SendDtmfEventWithoutRegistering) {
 TEST_F(VoipCoreTest, SendDtmfEventWithoutStartSend) {
   auto channel = voip_core_->CreateChannel(&transport_, 0xdeadc0de);
 
-  voip_core_->RegisterTelephoneEventType(channel, kPcmuPayload,
-                                         kPcmuSampleRateHz);
+  EXPECT_EQ(voip_core_->RegisterTelephoneEventType(channel, kPcmuPayload,
+                                                   kPcmuSampleRateHz),
+            VoipResult::kOk);
+
   // Send Dtmf event without calling StartSend beforehand, thus
   // Dtmf events cannot be sent and kFailedPrecondition is expected.
   EXPECT_EQ(
