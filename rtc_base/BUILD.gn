@@ -665,6 +665,13 @@ rtc_library("rtc_json") {
   }
 }
 
+rtc_source_set("async_resolver") {
+  # TODO(bugs.webrtc.org/9987): This build target will soon contain
+  # async_resolver source files (see
+  # https://webrtc-review.googlesource.com/c/src/+/196903).
+  sources = [ "async_resolver.h" ]
+}
+
 rtc_source_set("net_helpers") {
   # TODO(bugs.webrtc.org/9987): This build target will soon contain
   #                             the following files:
@@ -960,7 +967,8 @@ rtc_library("rtc_base") {
     "unique_id_generator.h",
   ]
 
-  if (rtc_openssl_is_boringssl) {
+  # If we are building the SSL library ourselves, we know it's BoringSSL.
+  if (rtc_build_ssl) {
     sources += [
       "boringssl_certificate.cc",
       "boringssl_certificate.h",
