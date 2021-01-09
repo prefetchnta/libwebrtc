@@ -1167,7 +1167,8 @@ bool WebRtcVideoChannel::GetChangedRecvParameters(
   const std::vector<VideoCodecSettings> mapped_codecs =
       MapCodecs(params.codecs);
   if (mapped_codecs.empty()) {
-    RTC_LOG(LS_ERROR) << "SetRecvParameters called without any video codecs.";
+    RTC_LOG(LS_ERROR)
+        << "GetChangedRecvParameters called without any video codecs.";
     return false;
   }
 
@@ -1180,7 +1181,7 @@ bool WebRtcVideoChannel::GetChangedRecvParameters(
     for (const VideoCodecSettings& mapped_codec : mapped_codecs) {
       if (!FindMatchingCodec(local_supported_codecs, mapped_codec.codec)) {
         RTC_LOG(LS_ERROR)
-            << "SetRecvParameters called with unsupported video codec: "
+            << "GetChangedRecvParameters called with unsupported video codec: "
             << mapped_codec.codec.ToString();
         return false;
       }
@@ -1349,21 +1350,6 @@ bool WebRtcVideoChannel::AddSendStream(const StreamParams& sp) {
       video_config_.periodic_alr_bandwidth_probing;
   config.encoder_settings.experiment_cpu_load_estimator =
       video_config_.experiment_cpu_load_estimator;
-  using TargetBitrateType =
-      webrtc::VideoStreamEncoderSettings::BitrateAllocationCallbackType;
-  if (send_rtp_extensions_ &&
-      webrtc::RtpExtension::FindHeaderExtensionByUri(
-          *send_rtp_extensions_,
-          webrtc::RtpExtension::kVideoLayersAllocationUri)) {
-    config.encoder_settings.allocation_cb_type =
-        TargetBitrateType::kVideoLayersAllocation;
-  } else if (IsEnabled(call_->trials(), "WebRTC-Target-Bitrate-Rtcp")) {
-    config.encoder_settings.allocation_cb_type =
-        TargetBitrateType::kVideoBitrateAllocation;
-  } else {
-    config.encoder_settings.allocation_cb_type =
-        TargetBitrateType::kVideoBitrateAllocationWhenScreenSharing;
-  }
   config.encoder_settings.encoder_factory = encoder_factory_;
   config.encoder_settings.bitrate_allocator_factory =
       bitrate_allocator_factory_;
@@ -3538,7 +3524,7 @@ EncoderStreamFactory::CreateDefaultVideoStreams(
           *encoder_config.simulcast_layers[0].num_temporal_layers;
     }
   }
-
+  layer.scalability_mode = encoder_config.simulcast_layers[0].scalability_mode;
   layers.push_back(layer);
   return layers;
 }
