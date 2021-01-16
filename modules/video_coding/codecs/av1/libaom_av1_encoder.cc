@@ -512,6 +512,15 @@ int32_t LibaomAv1Encoder::Encode(
     if (SvcEnabled()) {
       SetSvcLayerId(layer_frame);
       SetSvcRefFrameConfig(layer_frame);
+
+      aom_codec_err_t ret =
+          aom_codec_control(&ctx_, AV1E_SET_ERROR_RESILIENT_MODE,
+                            layer_frame.TemporalId() > 0 ? 1 : 0);
+      if (ret != AOM_CODEC_OK) {
+        RTC_LOG(LS_WARNING) << "LibaomAv1Encoder::Encode returned " << ret
+                            << " on control AV1E_SET_ERROR_RESILIENT_MODE.";
+        return WEBRTC_VIDEO_CODEC_ERROR;
+      }
     }
 
     // Encode a frame.
@@ -663,6 +672,15 @@ VideoEncoder::EncoderInfo LibaomAv1Encoder::GetEncoderInfo() const {
   info.is_hardware_accelerated = false;
   info.scaling_settings = VideoEncoder::ScalingSettings(kMinQindex, kMaxQindex);
   info.preferred_pixel_formats = {VideoFrameBuffer::Type::kI420};
+  if (SvcEnabled()) {
+    for (int sid = 0; sid < svc_params_->number_spatial_layers; ++sid) {
+      info.fps_allocation[sid].resize(svc_params_->number_temporal_layers);
+      for (int tid = 0; tid < svc_params_->number_temporal_layers; ++tid) {
+        info.fps_allocation[sid][tid] =
+            encoder_settings_.maxFramerate / svc_params_->framerate_factor[tid];
+      }
+    }
+  }
   return info;
 }
 
