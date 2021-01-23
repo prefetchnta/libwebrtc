@@ -123,6 +123,9 @@ AudioProcessingSimulator::AudioProcessingSimulator(
       worker_queue_("file_writer_task_queue") {
   RTC_CHECK(!settings_.dump_internal_data || WEBRTC_APM_DEBUG_DUMP == 1);
   ApmDataDumper::SetActivated(settings_.dump_internal_data);
+  if (settings_.dump_set_to_use) {
+    ApmDataDumper::SetDumpSetToUse(*settings_.dump_set_to_use);
+  }
   if (settings_.dump_internal_data_output_dir.has_value()) {
     ApmDataDumper::SetOutputDirectory(
         settings_.dump_internal_data_output_dir.value());
@@ -496,11 +499,6 @@ void AudioProcessingSimulator::ConfigureAudioProcessor() {
   if (settings_.use_analog_agc) {
     apm_config.gain_controller1.analog_gain_controller.enabled =
         *settings_.use_analog_agc;
-  }
-  if (settings_.use_analog_agc_agc2_level_estimator) {
-    apm_config.gain_controller1.analog_gain_controller
-        .enable_agc2_level_estimator =
-        *settings_.use_analog_agc_agc2_level_estimator;
   }
   if (settings_.analog_agc_disable_digital_adaptive) {
     apm_config.gain_controller1.analog_gain_controller.enable_digital_adaptive =

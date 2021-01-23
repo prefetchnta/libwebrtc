@@ -600,6 +600,71 @@ class PeerConnectionWrapper : public webrtc::PeerConnectionObserver,
         webrtc::CreateSessionDescription(SdpType::kRollback, ""));
   }
 
+  // Functions for querying stats.
+  void StartWatchingDelayStats() {
+    // Get the baseline numbers for audio_packets and audio_delay.
+    auto received_stats = NewGetStats();
+    auto track_stats =
+        received_stats->GetStatsOfType<webrtc::RTCMediaStreamTrackStats>()[0];
+    ASSERT_TRUE(track_stats->relative_packet_arrival_delay.is_defined());
+    auto rtp_stats =
+        received_stats->GetStatsOfType<webrtc::RTCInboundRTPStreamStats>()[0];
+    ASSERT_TRUE(rtp_stats->packets_received.is_defined());
+    ASSERT_TRUE(rtp_stats->track_id.is_defined());
+    audio_track_stats_id_ = track_stats->id();
+    ASSERT_TRUE(received_stats->Get(audio_track_stats_id_));
+    rtp_stats_id_ = rtp_stats->id();
+    ASSERT_EQ(audio_track_stats_id_, *rtp_stats->track_id);
+    audio_packets_stat_ = *rtp_stats->packets_received;
+    audio_delay_stat_ = *track_stats->relative_packet_arrival_delay;
+    audio_samples_stat_ = *track_stats->total_samples_received;
+    audio_concealed_stat_ = *track_stats->concealed_samples;
+  }
+
+  void UpdateDelayStats(std::string tag, int desc_size) {
+    auto report = NewGetStats();
+    auto track_stats =
+        report->GetAs<webrtc::RTCMediaStreamTrackStats>(audio_track_stats_id_);
+    ASSERT_TRUE(track_stats);
+    auto rtp_stats =
+        report->GetAs<webrtc::RTCInboundRTPStreamStats>(rtp_stats_id_);
+    ASSERT_TRUE(rtp_stats);
+    auto delta_packets = *rtp_stats->packets_received - audio_packets_stat_;
+    auto delta_rpad =
+        *track_stats->relative_packet_arrival_delay - audio_delay_stat_;
+    auto recent_delay = delta_packets > 0 ? delta_rpad / delta_packets : -1;
+    // An average relative packet arrival delay over the renegotiation of
+    // > 100 ms indicates that something is dramatically wrong, and will impact
+    // quality for sure.
+    EXPECT_GT(0.1, recent_delay) << tag << " size " << desc_size;
+    auto delta_samples =
+        *track_stats->total_samples_received - audio_samples_stat_;
+    auto delta_concealed =
+        *track_stats->concealed_samples - audio_concealed_stat_;
+    // These limits should be adjusted down as we improve:
+    //
+    // Concealing more than 4000 samples during a renegotiation is unacceptable.
+    // Concealing more than 20% of samples during a renegotiation is
+    // unacceptable.
+
+    // Current lowest scores:
+    // linux_more_configs bot at conceal rate 0.516
+    // linux_more_configs bot at conceal count 5184
+    // android_arm_rel at conceal count 9241
+    EXPECT_GT(15000U, delta_concealed) << "Concealed " << delta_concealed
+                                       << " of " << delta_samples << " samples";
+    if (delta_samples > 0) {
+      EXPECT_GT(0.6, 1.0 * delta_concealed / delta_samples)
+          << "Concealed " << delta_concealed << " of " << delta_samples
+          << " samples";
+    }
+    // Increment trailing counters
+    audio_packets_stat_ = *rtp_stats->packets_received;
+    audio_delay_stat_ = *track_stats->relative_packet_arrival_delay;
+    audio_samples_stat_ = *track_stats->total_samples_received;
+    audio_concealed_stat_ = *track_stats->concealed_samples;
+  }
+
  private:
   explicit PeerConnectionWrapper(const std::string& debug_name)
       : debug_name_(debug_name) {}
@@ -857,8 +922,7 @@ class PeerConnectionWrapper : public webrtc::PeerConnectionObserver,
     } else {
       invoker_.AsyncInvokeDelayed<void>(
           RTC_FROM_HERE, rtc::Thread::Current(),
-          rtc::Bind(&PeerConnectionWrapper::RelaySdpMessageIfReceiverExists,
-                    this, type, msg),
+          [this, type, msg] { RelaySdpMessageIfReceiverExists(type, msg); },
           signaling_delay_ms_);
     }
   }
@@ -879,8 +943,9 @@ class PeerConnectionWrapper : public webrtc::PeerConnectionObserver,
     } else {
       invoker_.AsyncInvokeDelayed<void>(
           RTC_FROM_HERE, rtc::Thread::Current(),
-          rtc::Bind(&PeerConnectionWrapper::RelayIceMessageIfReceiverExists,
-                    this, sdp_mid, sdp_mline_index, msg),
+          [this, sdp_mid, sdp_mline_index, msg] {
+            RelayIceMessageIfReceiverExists(sdp_mid, sdp_mline_index, msg);
+          },
           signaling_delay_ms_);
     }
   }
@@ -1068,6 +1133,14 @@ class PeerConnectionWrapper : public webrtc::PeerConnectionObserver,
       peer_connection_signaling_state_history_;
   webrtc::FakeRtcEventLogFactory* event_log_factory_;
 
+  // Variables for tracking delay stats on an audio track
+  int audio_packets_stat_ = 0;
+  double audio_delay_stat_ = 0.0;
+  uint64_t audio_samples_stat_ = 0;
+  uint64_t audio_concealed_stat_ = 0;
+  std::string rtp_stats_id_;
+  std::string audio_track_stats_id_;
+
   rtc::AsyncInvoker invoker_;
 
   friend class PeerConnectionIntegrationBaseTest;
@@ -1233,7 +1306,7 @@ class PeerConnectionIntegrationBaseTest : public ::testing::Test {
   }
 
   ~PeerConnectionIntegrationBaseTest() {
-    // The PeerConnections should deleted before the TurnCustomizers.
+    // The PeerConnections should be deleted before the TurnCustomizers.
     // A TurnPort is created with a raw pointer to a TurnCustomizer. The
     // TurnPort has the same lifetime as the PeerConnection, so it's expected
     // that the TurnCustomizer outlives the life of the PeerConnection or else
@@ -1310,13 +1383,11 @@ class PeerConnectionIntegrationBaseTest : public ::testing::Test {
       const PeerConnectionFactory::Options* options,
       const RTCConfiguration* config,
       webrtc::PeerConnectionDependencies dependencies) {
-    std::unique_ptr<webrtc::FakeRtcEventLogFactory> event_log_factory(
-        new webrtc::FakeRtcEventLogFactory(rtc::Thread::Current()));
-    return CreatePeerConnectionWrapper(debug_name, options, config,
-                                       std::move(dependencies),
-                                       std::move(event_log_factory),
-                                       /*reset_encoder_factory=*/false,
-                                       /*reset_decoder_factory=*/false);
+    return CreatePeerConnectionWrapper(
+        debug_name, options, config, std::move(dependencies),
+        std::make_unique<webrtc::FakeRtcEventLogFactory>(),
+        /*reset_encoder_factory=*/false,
+        /*reset_decoder_factory=*/false);
   }
 
   bool CreatePeerConnectionWrappers() {
@@ -1547,12 +1618,12 @@ class PeerConnectionIntegrationBaseTest : public ::testing::Test {
   }
 
   void SetPortAllocatorFlags(uint32_t caller_flags, uint32_t callee_flags) {
-    network_thread()->Invoke<void>(
-        RTC_FROM_HERE, rtc::Bind(&cricket::PortAllocator::set_flags,
-                                 caller()->port_allocator(), caller_flags));
-    network_thread()->Invoke<void>(
-        RTC_FROM_HERE, rtc::Bind(&cricket::PortAllocator::set_flags,
-                                 callee()->port_allocator(), callee_flags));
+    network_thread()->Invoke<void>(RTC_FROM_HERE, [this, caller_flags] {
+      caller()->port_allocator()->set_flags(caller_flags);
+    });
+    network_thread()->Invoke<void>(RTC_FROM_HERE, [this, callee_flags] {
+      callee()->port_allocator()->set_flags(callee_flags);
+    });
   }
 
   rtc::FirewallSocketServer* firewall() const { return fss_.get(); }
@@ -3659,7 +3730,7 @@ TEST_P(PeerConnectionIntegrationTest, AddRtpDataChannelInSubsequentOffer) {
                  kDefaultTimeout);
 }
 
-#ifdef HAVE_SCTP
+#ifdef WEBRTC_HAVE_SCTP
 
 // This test sets up a call between two parties with audio, video and an SCTP
 // data channel.
@@ -3885,7 +3956,7 @@ TEST_P(PeerConnectionIntegrationTest,
                  kDefaultTimeout);
 }
 
-#endif  // HAVE_SCTP
+#endif  // WEBRTC_HAVE_SCTP
 
 // Test that the ICE connection and gathering states eventually reach
 // "complete".
@@ -5142,7 +5213,7 @@ TEST_P(PeerConnectionIntegrationTest, ClosingConnectionStopsPacketFlow) {
   ASSERT_TRUE(CreatePeerConnectionWrappers());
   ConnectFakeSignaling();
   caller()->AddAudioVideoTracks();
-#ifdef HAVE_SCTP
+#ifdef WEBRTC_HAVE_SCTP
   caller()->CreateDataChannel();
 #endif
   caller()->CreateAndSetAndSignalOffer();
@@ -5162,7 +5233,7 @@ TEST_P(PeerConnectionIntegrationTest, ClosingConnectionStopsPacketFlow) {
 // Test that transport stats are generated by the RTCStatsCollector for a
 // connection that only involves data channels. This is a regression test for
 // crbug.com/826972.
-#ifdef HAVE_SCTP
+#ifdef WEBRTC_HAVE_SCTP
 TEST_P(PeerConnectionIntegrationTest,
        TransportStatsReportedForDataChannelOnlyConnection) {
   ASSERT_TRUE(CreatePeerConnectionWrappers());
@@ -5178,7 +5249,7 @@ TEST_P(PeerConnectionIntegrationTest,
   auto callee_report = callee()->NewGetStats();
   EXPECT_EQ(1u, callee_report->GetStatsOfType<RTCTransportStats>().size());
 }
-#endif  // HAVE_SCTP
+#endif  // WEBRTC_HAVE_SCTP
 
 TEST_P(PeerConnectionIntegrationTest,
        IceEventsGeneratedAndLoggedInRtcEventLog) {
@@ -5192,11 +5263,9 @@ TEST_P(PeerConnectionIntegrationTest,
   ASSERT_NE(nullptr, caller()->event_log_factory());
   ASSERT_NE(nullptr, callee()->event_log_factory());
   webrtc::FakeRtcEventLog* caller_event_log =
-      static_cast<webrtc::FakeRtcEventLog*>(
-          caller()->event_log_factory()->last_log_created());
+      caller()->event_log_factory()->last_log_created();
   webrtc::FakeRtcEventLog* callee_event_log =
-      static_cast<webrtc::FakeRtcEventLog*>(
-          callee()->event_log_factory()->last_log_created());
+      callee()->event_log_factory()->last_log_created();
   ASSERT_NE(nullptr, caller_event_log);
   ASSERT_NE(nullptr, callee_event_log);
   int caller_ice_config_count = caller_event_log->GetEventCount(
@@ -5474,7 +5543,8 @@ TEST_F(PeerConnectionIntegrationTestUnifiedPlan,
   // Add more tracks until we get close to having issues.
   // Issues have been seen at:
   // - 32 tracks on android_arm64_rel and android_arm_dbg bots
-  while (current_size < 16) {
+  // - 16 tracks on android_arm_dbg (flaky)
+  while (current_size < 8) {
     // Double the number of tracks
     for (int i = 0; i < current_size; i++) {
       caller()->pc()->AddTransceiver(cricket::MEDIA_TYPE_AUDIO);
@@ -5535,6 +5605,7 @@ TEST_F(PeerConnectionIntegrationTestUnifiedPlan,
   ASSERT_TRUE(CreatePeerConnectionWrappersWithConfig(config, config));
   ConnectFakeSignaling();
   caller()->AddAudioTrack();
+  callee()->AddAudioTrack();
   caller()->CreateAndSetAndSignalOffer();
   ASSERT_TRUE_WAIT(SignalingStateStable(), kDefaultTimeout);
   // Wait until we can see the audio flowing.
@@ -5542,26 +5613,15 @@ TEST_F(PeerConnectionIntegrationTestUnifiedPlan,
   media_expectations.CalleeExpectsSomeAudio();
   ASSERT_TRUE(ExpectNewFrames(media_expectations));
 
-  // Get the baseline numbers for audio_packets and audio_delay.
-  auto received_stats = callee()->NewGetStats();
-  auto track_stats =
-      received_stats->GetStatsOfType<webrtc::RTCMediaStreamTrackStats>()[0];
-  ASSERT_TRUE(track_stats->relative_packet_arrival_delay.is_defined());
-  auto rtp_stats =
-      received_stats->GetStatsOfType<webrtc::RTCInboundRTPStreamStats>()[0];
-  ASSERT_TRUE(rtp_stats->packets_received.is_defined());
-  ASSERT_TRUE(rtp_stats->track_id.is_defined());
-  auto audio_track_stats_id = track_stats->id();
-  ASSERT_TRUE(received_stats->Get(audio_track_stats_id));
-  auto rtp_stats_id = rtp_stats->id();
-  ASSERT_EQ(audio_track_stats_id, *rtp_stats->track_id);
-  auto audio_packets = *rtp_stats->packets_received;
-  auto audio_delay = *track_stats->relative_packet_arrival_delay;
+  // Get the baseline numbers for audio_packets and audio_delay
+  // in both directions.
+  caller()->StartWatchingDelayStats();
+  callee()->StartWatchingDelayStats();
 
   int current_size = caller()->pc()->GetTransceivers().size();
   // Add more tracks until we get close to having issues.
   // Making this number very large makes the test very slow.
-  while (current_size < 32) {
+  while (current_size < 16) {
     // Double the number of tracks
     for (int i = 0; i < current_size; i++) {
       caller()->pc()->AddTransceiver(cricket::MEDIA_TYPE_VIDEO);
@@ -5578,22 +5638,8 @@ TEST_F(PeerConnectionIntegrationTestUnifiedPlan,
     ASSERT_GT(5000, elapsed_time_ms)
         << "Video transceivers: Negotiation took too long after "
         << current_size << " tracks added";
-    auto report = callee()->NewGetStats();
-    track_stats =
-        report->GetAs<webrtc::RTCMediaStreamTrackStats>(audio_track_stats_id);
-    ASSERT_TRUE(track_stats);
-    rtp_stats = report->GetAs<webrtc::RTCInboundRTPStreamStats>(rtp_stats_id);
-    ASSERT_TRUE(rtp_stats);
-    auto delta_packets = *rtp_stats->packets_received - audio_packets;
-    auto delta_rpad = *track_stats->relative_packet_arrival_delay - audio_delay;
-    auto recent_delay = delta_packets > 0 ? delta_rpad / delta_packets : -1;
-    // An average relative packet arrival delay over the renegotiation of
-    // > 100 ms indicates that something is dramatically wrong, and will impact
-    // quality for sure.
-    ASSERT_GT(0.1, recent_delay);
-    // Increment trailing counters
-    audio_packets = *rtp_stats->packets_received;
-    audio_delay = *track_stats->relative_packet_arrival_delay;
+    caller()->UpdateDelayStats("caller reception", current_size);
+    callee()->UpdateDelayStats("callee reception", current_size);
   }
 }
 
@@ -5887,7 +5933,7 @@ TEST_F(PeerConnectionIntegrationTestUnifiedPlan,
             callee_track->state());
 }
 
-#ifdef HAVE_SCTP
+#ifdef WEBRTC_HAVE_SCTP
 
 TEST_F(PeerConnectionIntegrationTestUnifiedPlan,
        EndToEndCallWithBundledSctpDataChannel) {
@@ -5955,7 +6001,7 @@ TEST_F(PeerConnectionIntegrationTestUnifiedPlan,
   ASSERT_TRUE_WAIT(!callee()->data_observer()->IsOpen(), kDefaultTimeout);
 }
 
-#endif  // HAVE_SCTP
+#endif  // WEBRTC_HAVE_SCTP
 
 }  // namespace
 }  // namespace webrtc

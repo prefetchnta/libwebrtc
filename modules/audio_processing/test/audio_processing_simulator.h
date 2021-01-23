@@ -106,7 +106,6 @@ struct SimulationSettings {
   absl::optional<bool> use_vad;
   absl::optional<bool> use_le;
   absl::optional<bool> use_all;
-  absl::optional<bool> use_analog_agc_agc2_level_estimator;
   absl::optional<bool> analog_agc_disable_digital_adaptive;
   absl::optional<int> agc_mode;
   absl::optional<int> agc_target_level;
@@ -139,6 +138,7 @@ struct SimulationSettings {
   bool dump_internal_data = false;
   WavFile::SampleFormat wav_output_format = WavFile::SampleFormat::kInt16;
   absl::optional<std::string> dump_internal_data_output_dir;
+  absl::optional<int> dump_set_to_use;
   absl::optional<std::string> call_order_input_filename;
   absl::optional<std::string> call_order_output_filename;
   absl::optional<std::string> aec_settings_filename;

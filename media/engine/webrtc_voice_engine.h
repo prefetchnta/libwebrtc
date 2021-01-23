@@ -29,6 +29,7 @@
 #include "rtc_base/buffer.h"
 #include "rtc_base/network_route.h"
 #include "rtc_base/task_queue.h"
+#include "rtc_base/task_utils/pending_task_safety_flag.h"
 #include "rtc_base/thread_checker.h"
 
 namespace webrtc {
@@ -276,7 +277,6 @@ class WebRtcVoiceMediaChannel final : public VoiceMediaChannel,
   bool MuteStream(uint32_t ssrc, bool mute);
 
   WebRtcVoiceEngine* engine() { return engine_; }
-  void ChangePlayout(bool playout);
   int CreateVoEChannel();
   bool DeleteVoEChannel(int channel);
   bool SetMaxSendBitrate(int bps);
@@ -285,7 +285,9 @@ class WebRtcVoiceMediaChannel final : public VoiceMediaChannel,
   // unsignaled anymore (i.e. it is now removed, or signaled), and return true.
   bool MaybeDeregisterUnsignaledRecvStream(uint32_t ssrc);
 
-  rtc::ThreadChecker worker_thread_checker_;
+  webrtc::TaskQueueBase* const worker_thread_;
+  webrtc::ScopedTaskSafety task_safety_;
+  rtc::ThreadChecker network_thread_checker_;
 
   WebRtcVoiceEngine* const engine_ = nullptr;
   std::vector<AudioCodec> send_codecs_;
@@ -301,7 +303,6 @@ class WebRtcVoiceMediaChannel final : public VoiceMediaChannel,
   int dtmf_payload_freq_ = -1;
   bool recv_transport_cc_enabled_ = false;
   bool recv_nack_enabled_ = false;
-  bool desired_playout_ = false;
   bool playout_ = false;
   bool send_ = false;
   webrtc::Call* const call_ = nullptr;

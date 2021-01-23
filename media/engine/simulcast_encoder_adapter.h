@@ -26,6 +26,7 @@
 #include "modules/video_coding/include/video_codec_interface.h"
 #include "modules/video_coding/utility/framerate_controller.h"
 #include "rtc_base/atomic_ops.h"
+#include "rtc_base/experiments/encoder_info_settings.h"
 #include "rtc_base/synchronization/sequence_checker.h"
 #include "rtc_base/system/no_unique_address.h"
 #include "rtc_base/system/rtc_export.h"
@@ -138,6 +139,8 @@ class RTC_EXPORT SimulcastEncoderAdapter : public VideoEncoder {
 
   void OnDroppedFrame(size_t stream_idx);
 
+  void OverrideFromFieldTrial(VideoEncoder::EncoderInfo* info) const;
+
   volatile int inited_;  // Accessed atomically.
   VideoEncoderFactory* const primary_encoder_factory_;
   VideoEncoderFactory* const fallback_encoder_factory_;
@@ -158,6 +161,8 @@ class RTC_EXPORT SimulcastEncoderAdapter : public VideoEncoder {
   const absl::optional<unsigned int> experimental_boosted_screenshare_qp_;
   const bool boost_base_layer_quality_;
   const bool prefer_temporal_support_on_base_layer_;
+
+  const SimulcastEncoderAdapterEncoderInfoSettings encoder_info_override_;
 };
 
 }  // namespace webrtc

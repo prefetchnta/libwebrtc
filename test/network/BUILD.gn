@@ -60,6 +60,7 @@ rtc_library("emulated_network") {
     "../../rtc_base:safe_minmax",
     "../../rtc_base:socket_address",
     "../../rtc_base:socket_server",
+    "../../rtc_base:stringutils",
     "../../rtc_base:task_queue_for_test",
     "../../rtc_base:threading",
     "../../rtc_base/synchronization:mutex",
@@ -137,7 +138,10 @@ rtc_library("cross_traffic_unittest") {
     "../../rtc_base:rtc_event",
     "../time_controller",
   ]
-  absl_deps = [ "//third_party/abseil-cpp/absl/memory" ]
+  absl_deps = [
+    "//third_party/abseil-cpp/absl/memory",
+    "//third_party/abseil-cpp/absl/types:optional",
+  ]
 }
 
 if (rtc_include_tests) {
