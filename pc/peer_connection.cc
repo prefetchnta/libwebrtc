@@ -45,13 +45,14 @@
 #include "pc/sctp_transport.h"
 #include "pc/simulcast_description.h"
 #include "pc/webrtc_session_description_factory.h"
+#include "rtc_base/callback_list.h"
 #include "rtc_base/helpers.h"
 #include "rtc_base/ip_address.h"
 #include "rtc_base/location.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/net_helper.h"
 #include "rtc_base/network_constants.h"
-#include "rtc_base/callback_list.h"
+#include "rtc_base/ref_counted_object.h"
 #include "rtc_base/socket_address.h"
 #include "rtc_base/string_encode.h"
 #include "rtc_base/task_utils/to_queued_task.h"
@@ -453,7 +454,8 @@ PeerConnection::PeerConnection(
       call_(std::move(call)),
       call_ptr_(call_.get()),
       data_channel_controller_(this),
-      message_handler_(signaling_thread()) {}
+      message_handler_(signaling_thread()),
+      weak_factory_(this) {}
 
 PeerConnection::~PeerConnection() {
   TRACE_EVENT0("webrtc", "PeerConnection::~PeerConnection");
@@ -602,18 +604,22 @@ RTCError PeerConnection::Initialize(
   }
 
   config.ice_transport_factory = ice_transport_factory_.get();
+  config.on_dtls_handshake_error_ =
+      [weak_ptr = weak_factory_.GetWeakPtr()](rtc::SSLHandshakeError s) {
+        if (weak_ptr) {
+          weak_ptr->OnTransportControllerDtlsHandshakeError(s);
+        }
+      };
 
   transport_controller_.reset(new JsepTransportController(
       signaling_thread(), network_thread(), port_allocator_.get(),
       async_resolver_factory_.get(), config));
 
-  transport_controller_->SignalDtlsHandshakeError.connect(
-      this, &PeerConnection::OnTransportControllerDtlsHandshakeError);
-
-  // Following RTC_DCHECKs are added by looking at the caller thread.
+  // The following RTC_DCHECKs are added by looking at the caller thread.
   // If this is incorrect there might not be test failures
   // due to lack of unit tests which trigger these scenarios.
   // TODO(bugs.webrtc.org/12160): Remove above comments.
+  // callbacks for signaling_thread.
   transport_controller_->SubscribeIceConnectionState(
       [this](cricket::IceConnectionState s) {
         RTC_DCHECK_RUN_ON(signaling_thread());
@@ -2337,6 +2343,52 @@ void PeerConnection::ReportSdpFormatReceived(
                         << SdpTypeToString(remote_description.GetType());
       break;
   }
+}
+
+void PeerConnection::ReportSdpBundleUsage(
+    const SessionDescriptionInterface& remote_description) {
+  RTC_DCHECK_RUN_ON(signaling_thread());
+
+  bool using_bundle =
+      remote_description.description()->HasGroup(cricket::GROUP_TYPE_BUNDLE);
+  int num_audio_mlines = 0;
+  int num_video_mlines = 0;
+  int num_data_mlines = 0;
+  for (const ContentInfo& content :
+       remote_description.description()->contents()) {
+    cricket::MediaType media_type = content.media_description()->type();
+    if (media_type == cricket::MEDIA_TYPE_AUDIO) {
+      num_audio_mlines += 1;
+    } else if (media_type == cricket::MEDIA_TYPE_VIDEO) {
+      num_video_mlines += 1;
+    } else if (media_type == cricket::MEDIA_TYPE_DATA) {
+      num_data_mlines += 1;
+    }
+  }
+  bool simple = num_audio_mlines <= 1 && num_video_mlines <= 1;
+  BundleUsage usage = kBundleUsageMax;
+  if (num_audio_mlines == 0 && num_video_mlines == 0) {
+    if (num_data_mlines > 0) {
+      usage = using_bundle ? kBundleUsageBundleDatachannelOnly
+                           : kBundleUsageNoBundleDatachannelOnly;
+    } else {
+      usage = kBundleUsageEmpty;
+    }
+  } else if (configuration_.sdp_semantics == SdpSemantics::kPlanB) {
+    // In plan-b, simple/complex usage will not show up in the number of
+    // m-lines or BUNDLE.
+    usage = using_bundle ? kBundleUsageBundlePlanB : kBundleUsageNoBundlePlanB;
+  } else {
+    if (simple) {
+      usage =
+          using_bundle ? kBundleUsageBundleSimple : kBundleUsageNoBundleSimple;
+    } else {
+      usage = using_bundle ? kBundleUsageBundleComplex
+                           : kBundleUsageNoBundleComplex;
+    }
+  }
+  RTC_HISTOGRAM_ENUMERATION("WebRTC.PeerConnection.BundleUsage", usage,
+                            kBundleUsageMax);
 }
 
 void PeerConnection::ReportIceCandidateCollected(

@@ -15,6 +15,7 @@
 #include <stdio.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <set>
@@ -24,29 +25,46 @@
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/strings/match.h"
 #include "api/candidate.h"
 #include "api/crypto_params.h"
 #include "api/jsep_ice_candidate.h"
 #include "api/jsep_session_description.h"
 #include "api/media_types.h"
 // for RtpExtension
+#include "absl/types/optional.h"
+#include "api/rtc_error.h"
 #include "api/rtp_parameters.h"
+#include "api/rtp_transceiver_direction.h"
 #include "media/base/codec.h"
 #include "media/base/media_constants.h"
+#include "media/base/rid_description.h"
 #include "media/base/rtp_utils.h"
+#include "media/base/stream_params.h"
 #include "media/sctp/sctp_transport_internal.h"
+#include "p2p/base/candidate_pair_interface.h"
+#include "p2p/base/ice_transport_internal.h"
 #include "p2p/base/p2p_constants.h"
 #include "p2p/base/port.h"
+#include "p2p/base/port_interface.h"
+#include "p2p/base/transport_description.h"
+#include "p2p/base/transport_info.h"
+#include "pc/media_protocol_names.h"
 #include "pc/media_session.h"
 #include "pc/sdp_serializer.h"
+#include "pc/session_description.h"
+#include "pc/simulcast_description.h"
 #include "rtc_base/arraysize.h"
 #include "rtc_base/checks.h"
+#include "rtc_base/helpers.h"
+#include "rtc_base/ip_address.h"
 #include "rtc_base/logging.h"
-#include "rtc_base/message_digest.h"
+#include "rtc_base/net_helper.h"
+#include "rtc_base/network_constants.h"
+#include "rtc_base/socket_address.h"
+#include "rtc_base/ssl_fingerprint.h"
+#include "rtc_base/string_encode.h"
 #include "rtc_base/string_utils.h"
 #include "rtc_base/strings/string_builder.h"
-#include "rtc_base/third_party/base64/base64.h"
 
 using cricket::AudioContentDescription;
 using cricket::Candidate;
@@ -78,10 +96,6 @@ using cricket::TransportInfo;
 using cricket::UnsupportedContentDescription;
 using cricket::VideoContentDescription;
 using rtc::SocketAddress;
-
-namespace cricket {
-class SessionDescription;
-}
 
 // TODO(deadbeef): Switch to using anonymous namespace rather than declaring
 // everything "static".
@@ -2660,6 +2674,10 @@ bool ParseMediaDescription(
     bool bundle_only = false;
     int section_msid_signaling = 0;
     const std::string& media_type = fields[0];
+    if ((media_type == kMediaTypeVideo || media_type == kMediaTypeAudio) &&
+        !cricket::IsRtpProtocol(protocol)) {
+      return ParseFailed(line, "Unsupported protocol for media type", error);
+    }
     if (media_type == kMediaTypeVideo) {
       content = ParseContentDescription<VideoContentDescription>(
           message, cricket::MEDIA_TYPE_VIDEO, mline_index, protocol,
@@ -2696,7 +2714,7 @@ bool ParseMediaDescription(
         }
         data_desc->set_protocol(protocol);
         content = std::move(data_desc);
-      } else {
+      } else if (cricket::IsRtpProtocol(protocol)) {
         // RTP
         std::unique_ptr<RtpDataContentDescription> data_desc =
             ParseContentDescription<RtpDataContentDescription>(
@@ -2704,6 +2722,8 @@ bool ParseMediaDescription(
                 payload_types, pos, &content_name, &bundle_only,
                 &section_msid_signaling, &transport, candidates, error);
         content = std::move(data_desc);
+      } else {
+        return ParseFailed(line, "Unsupported protocol for media type", error);
       }
     } else {
       RTC_LOG(LS_WARNING) << "Unsupported media type: " << line;
@@ -3123,16 +3143,12 @@ bool ParseContent(const std::string& message,
       if (!ParseDtlsSetup(line, &(transport->connection_role), error)) {
         return false;
       }
-    } else if (cricket::IsDtlsSctp(protocol)) {
+    } else if (cricket::IsDtlsSctp(protocol) &&
+               media_type == cricket::MEDIA_TYPE_DATA) {
       //
       // SCTP specific attributes
       //
       if (HasAttribute(line, kAttributeSctpPort)) {
-        if (media_type != cricket::MEDIA_TYPE_DATA) {
-          return ParseFailed(
-              line, "sctp-port attribute found in non-data media description.",
-              error);
-        }
         if (media_desc->as_sctp()->use_sctpmap()) {
           return ParseFailed(
               line, "sctp-port attribute can't be used with sctpmap.", error);
@@ -3143,12 +3159,6 @@ bool ParseContent(const std::string& message,
         }
         media_desc->as_sctp()->set_port(sctp_port);
       } else if (HasAttribute(line, kAttributeMaxMessageSize)) {
-        if (media_type != cricket::MEDIA_TYPE_DATA) {
-          return ParseFailed(
-              line,
-              "max-message-size attribute found in non-data media description.",
-              error);
-        }
         int max_message_size;
         if (!ParseSctpMaxMessageSize(line, &max_message_size, error)) {
           return false;

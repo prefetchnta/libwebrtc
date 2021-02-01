@@ -10,15 +10,26 @@
 
 #include "pc/jsep_transport_controller.h"
 
+#include <stddef.h>
+
+#include <algorithm>
 #include <memory>
 #include <utility>
 
 #include "absl/algorithm/container.h"
-#include "api/ice_transport_factory.h"
+#include "api/rtp_parameters.h"
+#include "api/transport/enums.h"
+#include "media/sctp/sctp_transport_internal.h"
+#include "p2p/base/dtls_transport.h"
 #include "p2p/base/ice_transport_internal.h"
+#include "p2p/base/p2p_constants.h"
 #include "p2p/base/port.h"
-#include "pc/srtp_filter.h"
 #include "rtc_base/checks.h"
+#include "rtc_base/location.h"
+#include "rtc_base/logging.h"
+#include "rtc_base/net_helper.h"
+#include "rtc_base/socket_address.h"
+#include "rtc_base/synchronization/sequence_checker.h"
 #include "rtc_base/thread.h"
 
 using webrtc::SdpType;
@@ -82,11 +93,13 @@ JsepTransportController::JsepTransportController(
       network_thread_(network_thread),
       port_allocator_(port_allocator),
       async_resolver_factory_(async_resolver_factory),
-      config_(config) {
+      config_(config),
+      active_reset_srtp_params_(config.active_reset_srtp_params) {
   // The |transport_observer| is assumed to be non-null.
   RTC_DCHECK(config_.transport_observer);
   RTC_DCHECK(config_.rtcp_handler);
   RTC_DCHECK(config_.ice_transport_factory);
+  RTC_DCHECK(config_.on_dtls_handshake_error_);
 }
 
 JsepTransportController::~JsepTransportController() {
@@ -394,11 +407,11 @@ void JsepTransportController::SetActiveResetSrtpParams(
     });
     return;
   }
-
+  RTC_DCHECK_RUN_ON(network_thread_);
   RTC_LOG(INFO)
       << "Updating the active_reset_srtp_params for JsepTransportController: "
       << active_reset_srtp_params;
-  config_.active_reset_srtp_params = active_reset_srtp_params;
+  active_reset_srtp_params_ = active_reset_srtp_params;
   for (auto& kv : jsep_transports_by_name_) {
     kv.second->SetActiveResetSrtpParams(active_reset_srtp_params);
   }
@@ -524,7 +537,7 @@ JsepTransportController::CreateDtlsSrtpTransport(
     const std::string& transport_name,
     cricket::DtlsTransportInternal* rtp_dtls_transport,
     cricket::DtlsTransportInternal* rtcp_dtls_transport) {
-  RTC_DCHECK(network_thread_->IsCurrent());
+  RTC_DCHECK_RUN_ON(network_thread_);
   auto dtls_srtp_transport = std::make_unique<webrtc::DtlsSrtpTransport>(
       rtcp_dtls_transport == nullptr);
   if (config_.enable_external_auth) {
@@ -533,8 +546,7 @@ JsepTransportController::CreateDtlsSrtpTransport(
 
   dtls_srtp_transport->SetDtlsTransports(rtp_dtls_transport,
                                          rtcp_dtls_transport);
-  dtls_srtp_transport->SetActiveResetSrtpParams(
-      config_.active_reset_srtp_params);
+  dtls_srtp_transport->SetActiveResetSrtpParams(active_reset_srtp_params_);
   dtls_srtp_transport->SignalDtlsStateChange.connect(
       this, &JsepTransportController::UpdateAggregateStates_n);
   return dtls_srtp_transport;
@@ -1411,7 +1423,7 @@ void JsepTransportController::OnRtcpPacketReceived_n(
 
 void JsepTransportController::OnDtlsHandshakeError(
     rtc::SSLHandshakeError error) {
-  SignalDtlsHandshakeError(error);
+  config_.on_dtls_handshake_error_(error);
 }
 
 }  // namespace webrtc

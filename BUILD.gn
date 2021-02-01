@@ -14,6 +14,7 @@
 
 import("//build/config/linux/pkg_config.gni")
 import("//build/config/sanitizers/sanitizers.gni")
+import("//third_party/google_benchmark/buildconfig.gni")
 import("webrtc.gni")
 if (rtc_enable_protobuf) {
   import("//third_party/protobuf/proto_library.gni")
@@ -539,6 +540,7 @@ if (rtc_include_tests) {
       "api/transport:stun_unittest",
       "api/video/test:rtc_api_video_unittests",
       "api/video_codecs/test:video_codecs_api_unittests",
+      "api/voip:compile_all_headers",
       "call:fake_network_pipe_unittests",
       "p2p:libstunprober_unittests",
       "p2p:rtc_p2p_unittests",
@@ -583,12 +585,14 @@ if (rtc_include_tests) {
     }
   }
 
-  rtc_test("benchmarks") {
-    testonly = true
-    deps = [
-      "rtc_base/synchronization:mutex_benchmark",
-      "test:benchmark_main",
-    ]
+  if (enable_google_benchmarks) {
+    rtc_test("benchmarks") {
+      testonly = true
+      deps = [
+        "rtc_base/synchronization:mutex_benchmark",
+        "test:benchmark_main",
+      ]
+    }
   }
 
   # This runs tests that must run in real time and therefore can take some
@@ -698,6 +702,7 @@ if (rtc_include_tests) {
   rtc_test("voip_unittests") {
     testonly = true
     deps = [
+      "api/voip:compile_all_headers",
       "api/voip:voip_engine_factory_unittests",
       "audio/voip/test:audio_channel_unittests",
       "audio/voip/test:audio_egress_unittests",

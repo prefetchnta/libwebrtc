@@ -19,7 +19,6 @@
 #include "helpers.h"
 #include "modules/audio_device/fine_audio_buffer.h"
 #include "rtc_base/atomic_ops.h"
-#include "rtc_base/bind.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/thread.h"
@@ -508,9 +507,8 @@ void AudioDeviceIOS::HandleInterruptionBegin() {
     RTCLog(@"Stopping the audio unit due to interruption begin.");
     if (!audio_unit_->Stop()) {
       RTCLogError(@"Failed to stop the audio unit for interruption begin.");
-    } else {
-      PrepareForNewStart();
     }
+    PrepareForNewStart();
   }
   is_interrupted_ = true;
 }
@@ -813,8 +811,10 @@ void AudioDeviceIOS::UpdateAudioUnit(bool can_play_or_record) {
     RTCLog(@"Stopping audio unit for UpdateAudioUnit");
     if (!audio_unit_->Stop()) {
       RTCLogError(@"Failed to stop audio unit.");
+      PrepareForNewStart();
       return;
     }
+    PrepareForNewStart();
   }
 
   if (should_uninitialize_audio_unit) {

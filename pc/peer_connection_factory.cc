@@ -10,9 +10,7 @@
 
 #include "pc/peer_connection_factory.h"
 
-#include <cstdio>
 #include <memory>
-#include <type_traits>
 #include <utility>
 
 #include "absl/strings/match.h"
@@ -315,7 +313,7 @@ std::unique_ptr<Call> PeerConnectionFactory::CreateCall_w(
     RtcEventLog* event_log) {
   RTC_DCHECK_RUN_ON(worker_thread());
 
-  webrtc::Call::Config call_config(event_log);
+  webrtc::Call::Config call_config(event_log, network_thread());
   if (!channel_manager()->media_engine() || !context_->call_factory()) {
     return nullptr;
   }
