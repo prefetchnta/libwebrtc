@@ -44,15 +44,20 @@ rtc_library("mutex") {
   }
 }
 
-rtc_library("sequence_checker") {
+rtc_source_set("sequence_checker") {
+  sources = [ "sequence_checker.h" ]
+  deps = [ "../../api:sequence_checker" ]
+}
+
+rtc_library("sequence_checker_internal") {
+  visibility = [ "../../api:sequence_checker" ]
   sources = [
-    "sequence_checker.cc",
-    "sequence_checker.h",
+    "sequence_checker_internal.cc",
+    "sequence_checker_internal.h",
   ]
   deps = [
     ":mutex",
     "..:checks",
-    "..:criticalsection",
     "..:macromagic",
     "..:platform_thread_types",
     "..:stringutils",
@@ -104,20 +109,5 @@ if (rtc_include_tests) {
         "//third_party/google_benchmark",
       ]
     }
-  }
-
-  rtc_library("sequence_checker_unittests") {
-    testonly = true
-
-    sources = [ "sequence_checker_unittest.cc" ]
-    deps = [
-      ":sequence_checker",
-      "..:checks",
-      "..:rtc_base_approved",
-      "..:task_queue_for_test",
-      "../../api:function_view",
-      "../../test:test_main",
-      "../../test:test_support",
-    ]
   }
 }

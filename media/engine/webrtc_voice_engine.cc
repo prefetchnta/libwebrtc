@@ -1147,7 +1147,7 @@ class WebRtcVoiceMediaChannel::WebRtcAudioSendStream
   int NumPreferredChannels() const override { return num_encoded_channels_; }
 
   const AdaptivePtimeConfig adaptive_ptime_config_;
-  rtc::ThreadChecker worker_thread_checker_;
+  webrtc::SequenceChecker worker_thread_checker_;
   rtc::RaceChecker audio_capture_race_checker_;
   webrtc::Call* call_ = nullptr;
   webrtc::AudioSendStream::Config config_;
@@ -1376,7 +1376,7 @@ class WebRtcVoiceMediaChannel::WebRtcAudioReceiveStream {
     stream_->Reconfigure(config_);
   }
 
-  rtc::ThreadChecker worker_thread_checker_;
+  webrtc::SequenceChecker worker_thread_checker_;
   webrtc::Call* call_ = nullptr;
   webrtc::AudioReceiveStream::Config config_;
   // The stream is owned by WebRtcAudioReceiveStream and may be reallocated if
@@ -2290,10 +2290,15 @@ void WebRtcVoiceMediaChannel::OnPacketReceived(rtc::CopyOnWriteBuffer packet,
 void WebRtcVoiceMediaChannel::OnNetworkRouteChanged(
     const std::string& transport_name,
     const rtc::NetworkRoute& network_route) {
-  RTC_DCHECK_RUN_ON(worker_thread_);
-  call_->GetTransportControllerSend()->OnNetworkRouteChanged(transport_name,
-                                                             network_route);
+  RTC_DCHECK_RUN_ON(&network_thread_checker_);
+
   call_->OnAudioTransportOverheadChanged(network_route.packet_overhead);
+
+  worker_thread_->PostTask(ToQueuedTask(
+      task_safety_, [this, name = transport_name, route = network_route] {
+        RTC_DCHECK_RUN_ON(worker_thread_);
+        call_->GetTransportControllerSend()->OnNetworkRouteChanged(name, route);
+      }));
 }
 
 bool WebRtcVoiceMediaChannel::MuteStream(uint32_t ssrc, bool muted) {
@@ -2335,7 +2340,7 @@ bool WebRtcVoiceMediaChannel::SetMaxSendBitrate(int bps) {
 }
 
 void WebRtcVoiceMediaChannel::OnReadyToSend(bool ready) {
-  RTC_DCHECK_RUN_ON(worker_thread_);
+  RTC_DCHECK_RUN_ON(&network_thread_checker_);
   RTC_LOG(LS_VERBOSE) << "OnReadyToSend: " << (ready ? "Ready." : "Not ready.");
   call_->SignalChannelNetworkState(
       webrtc::MediaType::AUDIO,

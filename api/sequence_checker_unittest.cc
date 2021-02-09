@@ -8,7 +8,7 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "rtc_base/synchronization/sequence_checker.h"
+#include "api/sequence_checker.h"
 
 #include <memory>
 #include <utility>
@@ -17,7 +17,6 @@
 #include "rtc_base/event.h"
 #include "rtc_base/platform_thread.h"
 #include "rtc_base/task_queue_for_test.h"
-#include "rtc_base/thread_checker.h"
 #include "test/gtest.h"
 
 namespace webrtc {

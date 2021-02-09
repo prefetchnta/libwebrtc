@@ -41,6 +41,7 @@ rtc_library("emulated_network") {
     "../../api:array_view",
     "../../api:network_emulation_manager_api",
     "../../api:packet_socket_factory",
+    "../../api:scoped_refptr",
     "../../api:simulated_network_api",
     "../../api:time_controller",
     "../../api/numerics",
@@ -65,7 +66,9 @@ rtc_library("emulated_network") {
     "../../rtc_base:threading",
     "../../rtc_base/synchronization:mutex",
     "../../rtc_base/synchronization:sequence_checker",
+    "../../rtc_base/task_utils:pending_task_safety_flag",
     "../../rtc_base/task_utils:repeating_task",
+    "../../rtc_base/task_utils:to_queued_task",
     "../../rtc_base/third_party/sigslot",
     "../../system_wrappers",
     "../scenario:column_printer",
@@ -94,7 +97,7 @@ rtc_library("network_emulation_unittest") {
   ]
 }
 
-if (rtc_include_tests) {
+if (rtc_include_tests && !build_with_chromium) {
   rtc_library("network_emulation_pc_unittest") {
     testonly = true
     sources = [ "network_emulation_pc_unittest.cc" ]
@@ -170,13 +173,15 @@ if (rtc_include_tests) {
     ]
   }
 
-  rtc_library("network_emulation_unittests") {
-    testonly = true
-    deps = [
-      ":cross_traffic_unittest",
-      ":feedback_generator_unittest",
-      ":network_emulation_pc_unittest",
-      ":network_emulation_unittest",
-    ]
+  if (!build_with_chromium) {
+    rtc_library("network_emulation_unittests") {
+      testonly = true
+      deps = [
+        ":cross_traffic_unittest",
+        ":feedback_generator_unittest",
+        ":network_emulation_pc_unittest",
+        ":network_emulation_unittest",
+      ]
+    }
   }
 }

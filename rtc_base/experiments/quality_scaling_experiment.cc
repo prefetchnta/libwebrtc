@@ -19,13 +19,16 @@
 namespace webrtc {
 namespace {
 constexpr char kFieldTrial[] = "WebRTC-Video-QualityScaling";
-constexpr char kDefaultQualityScalingSetttings[] =
-    "Enabled-29,95,149,205,24,37,26,36,0.9995,0.9999,1";
 constexpr int kMinQp = 1;
 constexpr int kMaxVp8Qp = 127;
 constexpr int kMaxVp9Qp = 255;
 constexpr int kMaxH264Qp = 51;
 constexpr int kMaxGenericQp = 255;
+
+#if !defined(WEBRTC_IOS)
+constexpr char kDefaultQualityScalingSetttings[] =
+    "Enabled-29,95,149,205,24,37,26,36,0.9995,0.9999,1";
+#endif
 
 absl::optional<VideoEncoder::QpThresholds> GetThresholds(int low,
                                                          int high,
@@ -40,17 +43,22 @@ absl::optional<VideoEncoder::QpThresholds> GetThresholds(int low,
 }  // namespace
 
 bool QualityScalingExperiment::Enabled() {
+#if defined(WEBRTC_IOS)
+  return webrtc::field_trial::IsEnabled(kFieldTrial);
+#else
   return !webrtc::field_trial::IsDisabled(kFieldTrial);
+#endif
 }
 
 absl::optional<QualityScalingExperiment::Settings>
 QualityScalingExperiment::ParseSettings() {
   std::string group = webrtc::field_trial::FindFullName(kFieldTrial);
-  // TODO(http:crbug.org/webrtc/12401): Completely remove the experiment code
+  // TODO(http://crbug.com/webrtc/12401): Completely remove the experiment code
   // after few releases.
+#if !defined(WEBRTC_IOS)
   if (group.empty())
     group = kDefaultQualityScalingSetttings;
-
+#endif
   Settings s;
   if (sscanf(group.c_str(), "Enabled-%d,%d,%d,%d,%d,%d,%d,%d,%f,%f,%d",
              &s.vp8_low, &s.vp8_high, &s.vp9_low, &s.vp9_high, &s.h264_low,

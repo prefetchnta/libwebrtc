@@ -115,7 +115,8 @@ INSTANTIATE_TEST_SUITE_P(
     FieldTrials,
     QualityScalerTest,
     ::testing::Values(
-        "WebRTC-Video-QualityScaling/Enabled-1,2,3,4,5,6,7,8,0.9,0.99,1/"));
+        "WebRTC-Video-QualityScaling/Enabled-1,2,3,4,5,6,7,8,0.9,0.99,1/",
+        "WebRTC-Video-QualityScaling/Disabled/"));
 
 TEST_P(QualityScalerTest, DownscalesAfterContinuousFramedrop) {
   task_queue_.SendTask([this] { TriggerScale(kScaleDown); }, RTC_FROM_HERE);
@@ -170,7 +171,8 @@ TEST_P(QualityScalerTest, DoesNotDownscaleAfterHalfFramedrop) {
 }
 
 TEST_P(QualityScalerTest, DownscalesAfterTwoThirdsIfFieldTrialEnabled) {
-  const bool kDownScaleExpected = !GetParam().empty();
+  const bool kDownScaleExpected =
+      GetParam().find("Enabled") != std::string::npos;
   task_queue_.SendTask(
       [this] {
         for (int i = 0; i < kFramerate * 5; ++i) {
