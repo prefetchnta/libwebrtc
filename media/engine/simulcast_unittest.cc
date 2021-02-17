@@ -12,7 +12,6 @@
 
 #include "api/transport/field_trial_based_config.h"
 #include "media/base/media_constants.h"
-#include "media/engine/constants.h"
 #include "test/field_trial.h"
 #include "test/gtest.h"
 
@@ -378,7 +377,9 @@ TEST(SimulcastTest, BitratesForCloseToStandardResolution) {
   }
 }
 
-TEST(SimulcastTest, MaxLayers) {
+TEST(SimulcastTest, MaxLayersWithRoundUpDisabled) {
+  test::ScopedFieldTrials field_trials(
+      "WebRTC-SimulcastLayerLimitRoundUp/max_ratio:0.0/");
   FieldTrialBasedConfig trials;
   const size_t kMinLayers = 1;
   const int kMaxLayers = 3;
@@ -404,9 +405,8 @@ TEST(SimulcastTest, MaxLayers) {
   EXPECT_EQ(1u, streams.size());
 }
 
-TEST(SimulcastTest, MaxLayersWithFieldTrial) {
-  test::ScopedFieldTrials field_trials(
-      "WebRTC-SimulcastLayerLimitRoundUp/max_ratio:0.1/");
+TEST(SimulcastTest, MaxLayersWithDefaultRoundUpRatio) {
+  // Default: "WebRTC-SimulcastLayerLimitRoundUp/max_ratio:0.1/"
   FieldTrialBasedConfig trials;
   const size_t kMinLayers = 1;
   const int kMaxLayers = 3;
@@ -421,7 +421,7 @@ TEST(SimulcastTest, MaxLayersWithFieldTrial) {
                                         kBitratePriority, kQpMax, !kScreenshare,
                                         true, trials);
   EXPECT_EQ(3u, streams.size());
-  streams = cricket::GetSimulcastConfig(kMinLayers, kMaxLayers, 960, 510,
+  streams = cricket::GetSimulcastConfig(kMinLayers, kMaxLayers, 960, 508,
                                         kBitratePriority, kQpMax, !kScreenshare,
                                         true, trials);
   EXPECT_EQ(2u, streams.size());
@@ -435,6 +435,29 @@ TEST(SimulcastTest, MaxLayersWithFieldTrial) {
                                         true, trials);
   EXPECT_EQ(2u, streams.size());
   streams = cricket::GetSimulcastConfig(kMinLayers, kMaxLayers, 480, 254,
+                                        kBitratePriority, kQpMax, !kScreenshare,
+                                        true, trials);
+  EXPECT_EQ(1u, streams.size());
+}
+
+TEST(SimulcastTest, MaxLayersWithRoundUpRatio) {
+  test::ScopedFieldTrials field_trials(
+      "WebRTC-SimulcastLayerLimitRoundUp/max_ratio:0.13/");
+  FieldTrialBasedConfig trials;
+  const size_t kMinLayers = 1;
+  const int kMaxLayers = 3;
+
+  std::vector<VideoStream> streams;
+  streams = cricket::GetSimulcastConfig(kMinLayers, kMaxLayers, 480, 270,
+                                        kBitratePriority, kQpMax, !kScreenshare,
+                                        true, trials);
+  EXPECT_EQ(2u, streams.size());
+  // Lowest cropped height where max layers from higher resolution is used.
+  streams = cricket::GetSimulcastConfig(kMinLayers, kMaxLayers, 480, 252,
+                                        kBitratePriority, kQpMax, !kScreenshare,
+                                        true, trials);
+  EXPECT_EQ(2u, streams.size());
+  streams = cricket::GetSimulcastConfig(kMinLayers, kMaxLayers, 480, 250,
                                         kBitratePriority, kQpMax, !kScreenshare,
                                         true, trials);
   EXPECT_EQ(1u, streams.size());

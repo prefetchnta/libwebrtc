@@ -75,6 +75,7 @@ rtc_library("rtc_base_approved") {
     ":type_traits",
     "../api:array_view",
     "../api:scoped_refptr",
+    "../api:sequence_checker",
     "synchronization:mutex",
     "system:arch",
     "system:no_unique_address",
@@ -168,9 +169,8 @@ rtc_library("rtc_base_approved") {
     ":rtc_event",
     ":safe_conversions",
     ":stringutils",
-    ":thread_checker",
     ":timeutils",
-    "synchronization:sequence_checker",
+    "../api:sequence_checker",
   ]
 }
 
@@ -223,8 +223,8 @@ rtc_library("platform_thread") {
     ":rtc_task_queue_libevent",
     ":rtc_task_queue_stdlib",
     ":rtc_task_queue_win",
+    "../api:sequence_checker",
     "synchronization:mutex",
-    "synchronization:sequence_checker",
   ]
   sources = [
     "platform_thread.cc",
@@ -236,9 +236,8 @@ rtc_library("platform_thread") {
     ":macromagic",
     ":platform_thread_types",
     ":rtc_event",
-    ":thread_checker",
     ":timeutils",
-    "synchronization:sequence_checker",
+    "../api:sequence_checker",
   ]
   absl_deps = [ "//third_party/abseil-cpp/absl/strings" ]
 }
@@ -316,14 +315,6 @@ rtc_library("logging") {
       libs += [ "log" ]
     }
   }
-}
-
-rtc_source_set("thread_checker") {
-  sources = [ "thread_checker.h" ]
-  deps = [
-    ":deprecation",
-    "synchronization:sequence_checker",
-  ]
 }
 
 rtc_source_set("atomicops") {
@@ -409,6 +400,8 @@ rtc_source_set("safe_conversions") {
 rtc_library("timeutils") {
   visibility = [ "*" ]
   sources = [
+    "system_time.cc",
+    "system_time.h",
     "time_utils.cc",
     "time_utils.h",
   ]
@@ -494,7 +487,7 @@ rtc_source_set("rtc_operations_chain") {
     ":macromagic",
     ":refcount",
     "../api:scoped_refptr",
-    "synchronization:sequence_checker",
+    "../api:sequence_checker",
     "system:no_unique_address",
   ]
   absl_deps = [ "//third_party/abseil-cpp/absl/types:optional" ]
@@ -598,7 +591,7 @@ rtc_library("weak_ptr") {
   deps = [
     ":refcount",
     "../api:scoped_refptr",
-    "synchronization:sequence_checker",
+    "../api:sequence_checker",
     "system:no_unique_address",
   ]
 }
@@ -781,9 +774,6 @@ rtc_library("threading") {
     "network_monitor_factory.h",
     "physical_socket_server.cc",
     "physical_socket_server.h",
-
-    #   "signal_thread.cc",
-    #   "signal_thread.h",
     "thread.cc",
     "thread.h",
     "thread_message.h",
@@ -808,8 +798,9 @@ rtc_library("threading") {
     ":timeutils",
     "../api:function_view",
     "../api:scoped_refptr",
+    "../api:sequence_checker",
     "../api/task_queue",
-    "synchronization:sequence_checker",
+    "synchronization:mutex",
     "system:no_unique_address",
     "system:rtc_export",
     "task_utils:pending_task_safety_flag",
@@ -932,12 +923,12 @@ rtc_library("rtc_base") {
     "../api:array_view",
     "../api:function_view",
     "../api:scoped_refptr",
+    "../api:sequence_checker",
     "../api/numerics",
     "../api/task_queue",
     "../system_wrappers:field_trial",
     "network:sent_packet",
     "synchronization:mutex",
-    "synchronization:sequence_checker",
     "system:file_wrapper",
     "system:inline",
     "system:no_unique_address",
@@ -974,8 +965,6 @@ rtc_library("rtc_base") {
     "crypt_string.h",
     "data_rate_limiter.cc",
     "data_rate_limiter.h",
-    "deprecated/signal_thread.cc",
-    "deprecated/signal_thread.h",
     "dscp.h",
     "file_rotating_stream.cc",
     "file_rotating_stream.h",
@@ -983,7 +972,6 @@ rtc_library("rtc_base") {
     "helpers.h",
     "http_common.cc",
     "http_common.h",
-    "keep_ref_until_done.h",
     "mdns_responder_interface.h",
     "message_digest.cc",
     "message_digest.h",
@@ -1012,7 +1000,6 @@ rtc_library("rtc_base") {
     "rtc_certificate.h",
     "rtc_certificate_generator.cc",
     "rtc_certificate_generator.h",
-    "signal_thread.h",
     "sigslot_repeater.h",
     "socket_adapters.cc",
     "socket_adapters.h",
@@ -1055,7 +1042,6 @@ rtc_library("rtc_base") {
     include_dirs = [ "../../boringssl/src/include" ]
   } else {
     sources += [
-      "callback.h",
       "log_sinks.cc",
       "log_sinks.h",
       "rolling_accumulator.h",
@@ -1374,7 +1360,6 @@ if (rtc_include_tests) {
         "strings/string_format_unittest.cc",
         "swap_queue_unittest.cc",
         "thread_annotations_unittest.cc",
-        "thread_checker_unittest.cc",
         "time_utils_unittest.cc",
         "timestamp_aligner_unittest.cc",
         "virtual_socket_unittest.cc",
@@ -1497,10 +1482,8 @@ if (rtc_include_tests) {
       defines = []
 
       sources = [
-        "callback_unittest.cc",
         "crc32_unittest.cc",
         "data_rate_limiter_unittest.cc",
-        "deprecated/signal_thread_unittest.cc",
         "fake_clock_unittest.cc",
         "helpers_unittest.cc",
         "ip_address_unittest.cc",

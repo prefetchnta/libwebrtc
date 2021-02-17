@@ -14,10 +14,10 @@
 #include <utility>
 
 #include "absl/types/optional.h"
+#include "api/sequence_checker.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/location.h"
 #include "rtc_base/logging.h"
-#include "rtc_base/synchronization/sequence_checker.h"
 
 namespace webrtc {
 
@@ -45,6 +45,14 @@ SctpTransport::~SctpTransport() {
 }
 
 SctpTransportInformation SctpTransport::Information() const {
+  // TODO(tommi): Update PeerConnection::GetSctpTransport to hand out a proxy
+  // to the transport so that we can be sure that methods get called on the
+  // expected thread. Chromium currently calls this method from
+  // TransceiverStateSurfacer.
+  if (!owner_thread_->IsCurrent()) {
+    return owner_thread_->Invoke<SctpTransportInformation>(
+        RTC_FROM_HERE, [this] { return Information(); });
+  }
   RTC_DCHECK_RUN_ON(owner_thread_);
   return info_;
 }

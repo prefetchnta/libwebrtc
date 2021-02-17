@@ -19,6 +19,7 @@
 
 #include "absl/types/optional.h"
 #include "api/call/transport.h"
+#include "api/sequence_checker.h"
 #include "api/transport/field_trial_based_config.h"
 #include "api/video/video_bitrate_allocator_factory.h"
 #include "api/video/video_frame.h"
@@ -30,11 +31,9 @@
 #include "call/video_receive_stream.h"
 #include "call/video_send_stream.h"
 #include "media/base/media_engine.h"
-#include "media/engine/constants.h"
 #include "media/engine/unhandled_packets_buffer.h"
 #include "rtc_base/network_route.h"
 #include "rtc_base/synchronization/mutex.h"
-#include "rtc_base/synchronization/sequence_checker.h"
 #include "rtc_base/task_utils/pending_task_safety_flag.h"
 #include "rtc_base/thread_annotations.h"
 
@@ -484,13 +483,8 @@ class WebRtcVideoChannel : public VideoMediaChannel,
 
    private:
     void RecreateWebRtcVideoStream();
-    void MaybeRecreateWebRtcFlexfecStream();
-
-    void MaybeAssociateFlexfecWithVideo();
-    void MaybeDissociateFlexfecFromVideo();
 
     void ConfigureCodecs(const std::vector<VideoCodecSettings>& recv_codecs);
-    void ConfigureFlexfecCodec(int flexfec_payload_type);
 
     std::string GetCodecNameFromPayloadType(int payload_type);
 

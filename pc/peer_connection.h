@@ -12,6 +12,7 @@
 #define PC_PEER_CONNECTION_H_
 
 #include <stdint.h>
+
 #include <functional>
 #include <map>
 #include <memory>
@@ -43,6 +44,7 @@
 #include "api/rtp_transceiver_interface.h"
 #include "api/scoped_refptr.h"
 #include "api/sctp_transport_interface.h"
+#include "api/sequence_checker.h"
 #include "api/set_local_description_observer_interface.h"
 #include "api/set_remote_description_observer_interface.h"
 #include "api/stats/rtc_stats_collector_callback.h"
@@ -91,7 +93,6 @@
 #include "rtc_base/rtc_certificate.h"
 #include "rtc_base/ssl_certificate.h"
 #include "rtc_base/ssl_stream_adapter.h"
-#include "rtc_base/synchronization/sequence_checker.h"
 #include "rtc_base/task_utils/pending_task_safety_flag.h"
 #include "rtc_base/third_party/sigslot/sigslot.h"
 #include "rtc_base/thread.h"
@@ -379,6 +380,10 @@ class PeerConnection : public PeerConnectionInternal,
   void SetIceConnectionState(IceConnectionState new_state);
   void NoteUsageEvent(UsageEvent event);
 
+  // Asynchronously adds a remote candidate on the network thread.
+  void AddRemoteCandidate(const std::string& mid,
+                          const cricket::Candidate& candidate);
+
   // Report the UMA metric SdpFormatReceived for the given remote description.
   void ReportSdpFormatReceived(
       const SessionDescriptionInterface& remote_description);
@@ -501,9 +506,7 @@ class PeerConnection : public PeerConnectionInternal,
       const cricket::CandidatePairChangeEvent& event)
       RTC_RUN_ON(signaling_thread());
 
-
   void OnNegotiationNeeded();
-
 
   // Returns the specified SCTP DataChannel in sctp_data_channels_,
   // or nullptr if not found.
@@ -588,6 +591,8 @@ class PeerConnection : public PeerConnectionInternal,
       RTC_RUN_ON(signaling_thread());
 
   void ReportUsagePattern() const RTC_RUN_ON(signaling_thread());
+
+  void ReportRemoteIceCandidateAdded(const cricket::Candidate& candidate);
 
   // JsepTransportController::Observer override.
   //

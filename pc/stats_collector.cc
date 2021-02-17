@@ -26,6 +26,7 @@
 #include "api/rtp_receiver_interface.h"
 #include "api/rtp_sender_interface.h"
 #include "api/scoped_refptr.h"
+#include "api/sequence_checker.h"
 #include "api/video/video_content_type.h"
 #include "api/video/video_timing.h"
 #include "call/call.h"
@@ -47,7 +48,6 @@
 #include "rtc_base/socket_address.h"
 #include "rtc_base/ssl_stream_adapter.h"
 #include "rtc_base/string_encode.h"
-#include "rtc_base/synchronization/sequence_checker.h"
 #include "rtc_base/thread.h"
 #include "rtc_base/time_utils.h"
 #include "system_wrappers/include/field_trial.h"
@@ -649,15 +649,17 @@ void StatsCollector::GetStats(MediaStreamTrackInterface* track,
 void StatsCollector::UpdateStats(
     PeerConnectionInterface::StatsOutputLevel level) {
   RTC_DCHECK(pc_->signaling_thread()->IsCurrent());
-  double time_now = GetTimeNow();
-  // Calls to UpdateStats() that occur less than kMinGatherStatsPeriod number of
-  // ms apart will be ignored.
-  const double kMinGatherStatsPeriod = 50;
-  if (stats_gathering_started_ != 0 &&
-      stats_gathering_started_ + kMinGatherStatsPeriod > time_now) {
+  // Calls to UpdateStats() that occur less than kMinGatherStatsPeriodMs apart
+  // will be ignored. Using a monotonic clock specifically for this, while using
+  // a UTC clock for the reports themselves.
+  const int64_t kMinGatherStatsPeriodMs = 50;
+  int64_t cache_now_ms = rtc::TimeMillis();
+  if (cache_timestamp_ms_ != 0 &&
+      cache_timestamp_ms_ + kMinGatherStatsPeriodMs > cache_now_ms) {
     return;
   }
-  stats_gathering_started_ = time_now;
+  cache_timestamp_ms_ = cache_now_ms;
+  stats_gathering_started_ = GetTimeNow();
 
   // TODO(tommi): All of these hop over to the worker thread to fetch
   // information.  We could use an AsyncInvoker to run all of these and post
@@ -1267,7 +1269,7 @@ void StatsCollector::UpdateTrackReports() {
 }
 
 void StatsCollector::ClearUpdateStatsCacheForTest() {
-  stats_gathering_started_ = 0;
+  cache_timestamp_ms_ = 0;
 }
 
 }  // namespace webrtc

@@ -88,6 +88,7 @@ rtc_library("rtc_media_base") {
     "../api:rtc_error",
     "../api:rtp_parameters",
     "../api:scoped_refptr",
+    "../api:sequence_checker",
     "../api/audio:audio_frame_processor",
     "../api/audio_codecs:audio_codecs_api",
     "../api/crypto:frame_decryptor_interface",
@@ -116,7 +117,6 @@ rtc_library("rtc_media_base") {
     "../rtc_base:socket",
     "../rtc_base:stringutils",
     "../rtc_base/synchronization:mutex",
-    "../rtc_base/synchronization:sequence_checker",
     "../rtc_base/system:file_wrapper",
     "../rtc_base/system:rtc_export",
     "../rtc_base/third_party/sigslot",
@@ -161,16 +161,6 @@ rtc_library("rtc_media_base") {
   ]
 }
 
-rtc_library("rtc_constants") {
-  defines = []
-  libs = []
-  deps = []
-  sources = [
-    "engine/constants.cc",
-    "engine/constants.h",
-  ]
-}
-
 rtc_library("rtc_simulcast_encoder_adapter") {
   visibility = [ "*" ]
   defines = []
@@ -183,6 +173,7 @@ rtc_library("rtc_simulcast_encoder_adapter") {
     ":rtc_media_base",
     "../api:fec_controller_api",
     "../api:scoped_refptr",
+    "../api:sequence_checker",
     "../api/video:video_codec_constants",
     "../api/video:video_frame",
     "../api/video:video_rtp_headers",
@@ -195,7 +186,6 @@ rtc_library("rtc_simulcast_encoder_adapter") {
     "../rtc_base:rtc_base_approved",
     "../rtc_base/experiments:encoder_info_settings",
     "../rtc_base/experiments:rate_control_settings",
-    "../rtc_base/synchronization:sequence_checker",
     "../rtc_base/system:no_unique_address",
     "../rtc_base/system:rtc_export",
     "../system_wrappers",
@@ -232,7 +222,6 @@ rtc_library("rtc_internal_video_codecs") {
   defines = []
   libs = []
   deps = [
-    ":rtc_constants",
     ":rtc_encoder_simulcast_proxy",
     ":rtc_h264_profile_id",
     ":rtc_media_base",
@@ -281,13 +270,13 @@ rtc_library("rtc_audio_video") {
   defines = []
   libs = []
   deps = [
-    ":rtc_constants",
     ":rtc_media_base",
     "../api:call_api",
     "../api:libjingle_peerconnection_api",
     "../api:media_stream_interface",
     "../api:rtp_parameters",
     "../api:scoped_refptr",
+    "../api:sequence_checker",
     "../api:transport_api",
     "../api/audio:audio_frame_processor",
     "../api/audio:audio_mixer_api",
@@ -411,6 +400,7 @@ rtc_library("rtc_data") {
   deps = [
     ":rtc_media_base",
     "../api:call_api",
+    "../api:sequence_checker",
     "../api:transport_api",
     "../p2p:rtc_p2p",
     "../rtc_base",
@@ -546,7 +536,6 @@ if (rtc_include_tests) {
       defines = []
       deps = [
         ":rtc_audio_video",
-        ":rtc_constants",
         ":rtc_data",
         ":rtc_encoder_simulcast_proxy",
         ":rtc_internal_video_codecs",

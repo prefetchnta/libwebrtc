@@ -471,15 +471,6 @@ void VideoReceiveStream2::UpdateHistograms() {
   stats_proxy_.UpdateHistograms(fraction_lost, rtp_stats, nullptr);
 }
 
-void VideoReceiveStream2::AddSecondarySink(RtpPacketSinkInterface* sink) {
-  rtp_video_stream_receiver_.AddSecondarySink(sink);
-}
-
-void VideoReceiveStream2::RemoveSecondarySink(
-    const RtpPacketSinkInterface* sink) {
-  rtp_video_stream_receiver_.RemoveSecondarySink(sink);
-}
-
 bool VideoReceiveStream2::SetBaseMinimumPlayoutDelayMs(int delay_ms) {
   RTC_DCHECK_RUN_ON(&worker_sequence_checker_);
   if (delay_ms < kMinBaseMinimumDelayMs || delay_ms > kMaxBaseMinimumDelayMs) {
@@ -676,7 +667,7 @@ void VideoReceiveStream2::HandleEncodedFrame(
     keyframe_required_ = false;
     frame_decoded_ = true;
 
-    decoded_frame_picture_id = frame->id.picture_id;
+    decoded_frame_picture_id = frame->Id();
 
     if (decode_result == WEBRTC_VIDEO_CODEC_OK_REQUEST_KEYFRAME)
       force_request_key_frame = true;

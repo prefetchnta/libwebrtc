@@ -331,16 +331,16 @@ class RTC_EXPORT AudioProcessing : public rtc::RefCountInterface {
       } fixed_digital;
       struct AdaptiveDigital {
         bool enabled = false;
-        float vad_probability_attack = 1.f;
+        float vad_probability_attack = 0.3f;
         LevelEstimator level_estimator = kRms;
-        int level_estimator_adjacent_speech_frames_threshold = 1;
+        int level_estimator_adjacent_speech_frames_threshold = 6;
         // TODO(crbug.com/webrtc/7494): Remove `use_saturation_protector`.
         bool use_saturation_protector = true;
         float initial_saturation_margin_db = 20.f;
-        float extra_saturation_margin_db = 2.f;
-        int gain_applier_adjacent_speech_frames_threshold = 1;
+        float extra_saturation_margin_db = 5.f;
+        int gain_applier_adjacent_speech_frames_threshold = 6;
         float max_gain_change_db_per_second = 3.f;
-        float max_output_noise_level_dbfs = -50.f;
+        float max_output_noise_level_dbfs = -55.f;
         bool sse2_allowed = true;
         bool avx2_allowed = true;
         bool neon_allowed = true;
@@ -525,11 +525,16 @@ class RTC_EXPORT AudioProcessing : public rtc::RefCountInterface {
   // Set to true when the output of AudioProcessing will be muted or in some
   // other way not used. Ideally, the captured audio would still be processed,
   // but some components may change behavior based on this information.
-  // Default false.
+  // Default false. This method takes a lock. To achieve this in a lock-less
+  // manner the PostRuntimeSetting can instead be used.
   virtual void set_output_will_be_muted(bool muted) = 0;
 
-  // Enqueue a runtime setting.
+  // Enqueues a runtime setting.
   virtual void SetRuntimeSetting(RuntimeSetting setting) = 0;
+
+  // Enqueues a runtime setting. Returns a bool indicating whether the
+  // enqueueing was successfull.
+  virtual bool PostRuntimeSetting(RuntimeSetting setting) = 0;
 
   // Accepts and produces a 10 ms frame interleaved 16 bit integer audio as
   // specified in |input_config| and |output_config|. |src| and |dest| may use
