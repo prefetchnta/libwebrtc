@@ -88,7 +88,6 @@
 #include "pc/usage_pattern.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/copy_on_write_buffer.h"
-#include "rtc_base/deprecation.h"
 #include "rtc_base/network/sent_packet.h"
 #include "rtc_base/rtc_certificate.h"
 #include "rtc_base/ssl_certificate.h"
@@ -708,6 +707,10 @@ class PeerConnection : public PeerConnectionInternal,
   std::unique_ptr<RtpTransmissionManager> rtp_manager_;
 
   rtc::WeakPtrFactory<PeerConnection> weak_factory_;
+
+  // Did the connectionState ever change to `connected`?
+  // Used to gather metrics only the first such state change.
+  bool was_ever_connected_ RTC_GUARDED_BY(signaling_thread()) = false;
 };
 
 }  // namespace webrtc

@@ -634,6 +634,11 @@ INSTANTIATE_TEST_SUITE_P(DataChannelIntegrationTest,
                          Values(SdpSemantics::kPlanB,
                                 SdpSemantics::kUnifiedPlan));
 
+INSTANTIATE_TEST_SUITE_P(DataChannelIntegrationTest,
+                         DataChannelIntegrationTestWithFakeClock,
+                         Values(SdpSemantics::kPlanB,
+                                SdpSemantics::kUnifiedPlan));
+
 TEST_F(DataChannelIntegrationTestUnifiedPlan,
        EndToEndCallWithBundledSctpDataChannel) {
   ASSERT_TRUE(CreatePeerConnectionWrappers());

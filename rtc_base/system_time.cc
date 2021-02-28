@@ -8,6 +8,10 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
+// If WEBRTC_EXCLUDE_SYSTEM_TIME is set, an implementation of
+// rtc::SystemTimeNanos() must be provided externally.
+#ifndef WEBRTC_EXCLUDE_SYSTEM_TIME
+
 #include <stdint.h>
 
 #include <limits>
@@ -63,7 +67,7 @@ int64_t SystemTimeNanos() {
   ticks = kNumNanosecsPerSec * static_cast<int64_t>(ts.tv_sec) +
           static_cast<int64_t>(ts.tv_nsec);
 #elif defined(WINUWP)
-  ticks = TimeHelper::TicksNs();
+  ticks = WinUwpSystemTimeNanos();
 #elif defined(WEBRTC_WIN)
   static volatile LONG last_timegettime = 0;
   static volatile int64_t num_wrap_timegettime = 0;
@@ -90,3 +94,4 @@ int64_t SystemTimeNanos() {
 }
 
 }  // namespace rtc
+#endif  // WEBRTC_EXCLUDE_SYSTEM_TIME
