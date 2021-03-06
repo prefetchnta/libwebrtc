@@ -1014,6 +1014,7 @@ class RTCStatsReportVerifier {
     verifier.TestMemberIsIDReference(remote_inbound_stream.codec_id,
                                      RTCCodecStats::kType);
     verifier.TestMemberIsDefined(remote_inbound_stream.packets_lost);
+    verifier.TestMemberIsDefined(remote_inbound_stream.fraction_lost);
     // Note that the existance of RTCCodecStats is needed for |codec_id| and
     // |jitter| to be present.
     verifier.TestMemberIsNonNegative<double>(remote_inbound_stream.jitter);
@@ -1021,6 +1022,10 @@ class RTCStatsReportVerifier {
                                      RTCOutboundRTPStreamStats::kType);
     verifier.TestMemberIsNonNegative<double>(
         remote_inbound_stream.round_trip_time);
+    verifier.TestMemberIsNonNegative<double>(
+        remote_inbound_stream.total_round_trip_time);
+    verifier.TestMemberIsNonNegative<int32_t>(
+        remote_inbound_stream.round_trip_time_measurements);
     return verifier.ExpectAllMembersSuccessfullyTested();
   }
 

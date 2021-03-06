@@ -848,7 +848,10 @@ WEBRTC_RTCSTATS_IMPL(
     &packets_lost,
     &jitter,
     &local_id,
-    &round_trip_time)
+    &round_trip_time,
+    &fraction_lost,
+    &total_round_trip_time,
+    &round_trip_time_measurements)
 // clang-format on
 
 RTCRemoteInboundRtpStreamStats::RTCRemoteInboundRtpStreamStats(
@@ -867,7 +870,10 @@ RTCRemoteInboundRtpStreamStats::RTCRemoteInboundRtpStreamStats(
       packets_lost("packetsLost"),
       jitter("jitter"),
       local_id("localId"),
-      round_trip_time("roundTripTime") {}
+      round_trip_time("roundTripTime"),
+      fraction_lost("fractionLost"),
+      total_round_trip_time("totalRoundTripTime"),
+      round_trip_time_measurements("roundTripTimeMeasurements") {}
 
 RTCRemoteInboundRtpStreamStats::RTCRemoteInboundRtpStreamStats(
     const RTCRemoteInboundRtpStreamStats& other)
@@ -879,7 +885,10 @@ RTCRemoteInboundRtpStreamStats::RTCRemoteInboundRtpStreamStats(
       packets_lost(other.packets_lost),
       jitter(other.jitter),
       local_id(other.local_id),
-      round_trip_time(other.round_trip_time) {}
+      round_trip_time(other.round_trip_time),
+      fraction_lost(other.fraction_lost),
+      total_round_trip_time(other.total_round_trip_time),
+      round_trip_time_measurements(other.round_trip_time_measurements) {}
 
 RTCRemoteInboundRtpStreamStats::~RTCRemoteInboundRtpStreamStats() {}
 

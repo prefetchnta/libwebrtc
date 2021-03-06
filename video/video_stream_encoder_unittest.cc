@@ -2111,7 +2111,7 @@ TEST_F(VideoStreamEncoderTest,
   const absl::optional<VideoEncoder::ResolutionBitrateLimits>
       kDefaultLimits270p =
           EncoderInfoSettings::GetDefaultSinglecastBitrateLimitsForResolution(
-              480 * 270);
+              kVideoCodecVP8, 480 * 270);
   video_source_.IncomingCapturedFrame(CreateFrame(1, 480, 270));
   EXPECT_FALSE(WaitForFrame(1000));
   EXPECT_EQ(fake_encoder_.video_codec().numberOfSimulcastStreams, kNumStreams);
@@ -2124,7 +2124,7 @@ TEST_F(VideoStreamEncoderTest,
   const absl::optional<VideoEncoder::ResolutionBitrateLimits>
       kDefaultLimits360p =
           EncoderInfoSettings::GetDefaultSinglecastBitrateLimitsForResolution(
-              640 * 360);
+              kVideoCodecVP8, 640 * 360);
   video_source_.IncomingCapturedFrame(CreateFrame(2, 640, 360));
   EXPECT_FALSE(WaitForFrame(1000));
   EXPECT_EQ(static_cast<uint32_t>(kDefaultLimits360p->min_bitrate_bps),
@@ -2145,7 +2145,7 @@ TEST_F(VideoStreamEncoderTest,
   const absl::optional<VideoEncoder::ResolutionBitrateLimits>
       kDefaultLimits540p =
           EncoderInfoSettings::GetDefaultSinglecastBitrateLimitsForResolution(
-              960 * 540);
+              kVideoCodecVP8, 960 * 540);
   video_source_.IncomingCapturedFrame(CreateFrame(4, 960, 540));
   EXPECT_FALSE(WaitForFrame(1000));
   EXPECT_EQ(static_cast<uint32_t>(kDefaultLimits540p->min_bitrate_bps),
@@ -5530,8 +5530,8 @@ TEST_F(VideoStreamEncoderTest,
 
   // The default bitrate limits for 360p should be used.
   const absl::optional<VideoEncoder::ResolutionBitrateLimits> kLimits360p =
-      EncoderInfoSettings::GetDefaultSinglecastBitrateLimitsForResolution(640 *
-                                                                          360);
+      EncoderInfoSettings::GetDefaultSinglecastBitrateLimitsForResolution(
+          kVideoCodecVP9, 640 * 360);
   video_source_.IncomingCapturedFrame(CreateFrame(1, 1280, 720));
   EXPECT_FALSE(WaitForFrame(1000));
   EXPECT_EQ(fake_encoder_.video_codec().numberOfSimulcastStreams, 1);
@@ -5548,8 +5548,8 @@ TEST_F(VideoStreamEncoderTest,
 
   // The default bitrate limits for 270p should be used.
   const absl::optional<VideoEncoder::ResolutionBitrateLimits> kLimits270p =
-      EncoderInfoSettings::GetDefaultSinglecastBitrateLimitsForResolution(480 *
-                                                                          270);
+      EncoderInfoSettings::GetDefaultSinglecastBitrateLimitsForResolution(
+          kVideoCodecVP9, 480 * 270);
   video_source_.IncomingCapturedFrame(CreateFrame(2, 960, 540));
   EXPECT_FALSE(WaitForFrame(1000));
   EXPECT_EQ(fake_encoder_.video_codec().numberOfSimulcastStreams, 1);
@@ -5598,13 +5598,12 @@ TEST_F(VideoStreamEncoderTest, DefaultMaxAndMinBitratesNotUsedIfDisabled) {
 
   // The default bitrate limits for 360p should not be used.
   const absl::optional<VideoEncoder::ResolutionBitrateLimits> kLimits360p =
-      EncoderInfoSettings::GetDefaultSinglecastBitrateLimitsForResolution(640 *
-                                                                          360);
+      EncoderInfoSettings::GetDefaultSinglecastBitrateLimitsForResolution(
+          kVideoCodecVP9, 640 * 360);
   video_source_.IncomingCapturedFrame(CreateFrame(1, 1280, 720));
   EXPECT_FALSE(WaitForFrame(1000));
   EXPECT_EQ(fake_encoder_.video_codec().numberOfSimulcastStreams, 1);
-  EXPECT_EQ(fake_encoder_.video_codec().codecType,
-            VideoCodecType::kVideoCodecVP9);
+  EXPECT_EQ(fake_encoder_.video_codec().codecType, kVideoCodecVP9);
   EXPECT_EQ(fake_encoder_.video_codec().VP9()->numberOfSpatialLayers, 2);
   EXPECT_TRUE(fake_encoder_.video_codec().spatialLayers[0].active);
   EXPECT_EQ(640, fake_encoder_.video_codec().spatialLayers[0].width);
@@ -5621,8 +5620,8 @@ TEST_F(VideoStreamEncoderTest, SinglecastBitrateLimitsNotUsedForOneStream) {
 
   // The default singlecast bitrate limits for 720p should not be used.
   const absl::optional<VideoEncoder::ResolutionBitrateLimits> kLimits720p =
-      EncoderInfoSettings::GetDefaultSinglecastBitrateLimitsForResolution(1280 *
-                                                                          720);
+      EncoderInfoSettings::GetDefaultSinglecastBitrateLimitsForResolution(
+          kVideoCodecVP9, 1280 * 720);
   video_source_.IncomingCapturedFrame(CreateFrame(1, 1280, 720));
   EXPECT_FALSE(WaitForFrame(1000));
   EXPECT_EQ(fake_encoder_.video_codec().numberOfSimulcastStreams, 1);
@@ -7922,5 +7921,66 @@ TEST_F(VideoStreamEncoderTest, EncoderResolutionsExposedInSimulcast) {
 
   video_stream_encoder_->Stop();
 }
+
+TEST_F(VideoStreamEncoderTest,
+       QualityScalingNotAllowed_QualityScalingDisabled) {
+  VideoEncoderConfig video_encoder_config = video_encoder_config_.Copy();
+
+  // Disable scaling settings in encoder info.
+  fake_encoder_.SetQualityScaling(false);
+  // Disable quality scaling in encoder config.
+  video_encoder_config.is_quality_scaling_allowed = false;
+  ConfigureEncoder(std::move(video_encoder_config));
+
+  video_stream_encoder_->OnBitrateUpdatedAndWaitForManagedResources(
+      DataRate::BitsPerSec(kTargetBitrateBps),
+      DataRate::BitsPerSec(kTargetBitrateBps),
+      DataRate::BitsPerSec(kTargetBitrateBps), 0, 0, 0);
+
+  test::FrameForwarder source;
+  video_stream_encoder_->SetSource(
+      &source, webrtc::DegradationPreference::MAINTAIN_FRAMERATE);
+  EXPECT_THAT(source.sink_wants(), UnlimitedSinkWants());
+  EXPECT_FALSE(stats_proxy_->GetStats().bw_limited_resolution);
+
+  source.IncomingCapturedFrame(CreateFrame(1, 1280, 720));
+  WaitForEncodedFrame(1);
+  video_stream_encoder_->TriggerQualityLow();
+  EXPECT_FALSE(stats_proxy_->GetStats().bw_limited_resolution);
+
+  video_stream_encoder_->Stop();
+}
+
+#if !defined(WEBRTC_IOS)
+// TODO(bugs.webrtc.org/12401): Disabled because WebRTC-Video-QualityScaling is
+// disabled by default on iOS.
+TEST_F(VideoStreamEncoderTest, QualityScalingAllowed_QualityScalingEnabled) {
+  VideoEncoderConfig video_encoder_config = video_encoder_config_.Copy();
+
+  // Disable scaling settings in encoder info.
+  fake_encoder_.SetQualityScaling(false);
+  // Enable quality scaling in encoder config.
+  video_encoder_config.is_quality_scaling_allowed = true;
+  ConfigureEncoder(std::move(video_encoder_config));
+
+  video_stream_encoder_->OnBitrateUpdatedAndWaitForManagedResources(
+      DataRate::BitsPerSec(kTargetBitrateBps),
+      DataRate::BitsPerSec(kTargetBitrateBps),
+      DataRate::BitsPerSec(kTargetBitrateBps), 0, 0, 0);
+
+  test::FrameForwarder source;
+  video_stream_encoder_->SetSource(
+      &source, webrtc::DegradationPreference::MAINTAIN_FRAMERATE);
+  EXPECT_THAT(source.sink_wants(), UnlimitedSinkWants());
+  EXPECT_FALSE(stats_proxy_->GetStats().bw_limited_resolution);
+
+  source.IncomingCapturedFrame(CreateFrame(1, 1280, 720));
+  WaitForEncodedFrame(1);
+  video_stream_encoder_->TriggerQualityLow();
+  EXPECT_TRUE(stats_proxy_->GetStats().bw_limited_resolution);
+
+  video_stream_encoder_->Stop();
+}
+#endif
 
 }  // namespace webrtc
