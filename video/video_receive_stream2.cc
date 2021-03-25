@@ -38,7 +38,6 @@
 #include "modules/video_coding/timing.h"
 #include "modules/video_coding/utility/vp8_header_parser.h"
 #include "rtc_base/checks.h"
-#include "rtc_base/experiments/keyframe_interval_settings.h"
 #include "rtc_base/location.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/strings/string_builder.h"
@@ -58,7 +57,6 @@ constexpr int VideoReceiveStream2::kMaxWaitForKeyFrameMs;
 
 namespace {
 
-using video_coding::EncodedFrame;
 using ReturnReason = video_coding::FrameBuffer::ReturnReason;
 
 constexpr int kMinBaseMinimumDelayMs = 0;
@@ -69,7 +67,7 @@ constexpr int kMaxWaitForFrameMs = 3000;
 constexpr int kDefaultMaximumPreStreamDecoders = 100;
 
 // Concrete instance of RecordableEncodedFrame wrapping needed content
-// from video_coding::EncodedFrame.
+// from EncodedFrame.
 class WebRtcRecordableEncodedFrame : public RecordableEncodedFrame {
  public:
   explicit WebRtcRecordableEncodedFrame(const EncodedFrame& frame)
@@ -227,12 +225,8 @@ VideoReceiveStream2::VideoReceiveStream2(
                                  config_.frame_decryptor,
                                  config_.frame_transformer),
       rtp_stream_sync_(current_queue, this),
-      max_wait_for_keyframe_ms_(KeyframeIntervalSettings::ParseFromFieldTrials()
-                                    .MaxWaitForKeyframeMs()
-                                    .value_or(kMaxWaitForKeyFrameMs)),
-      max_wait_for_frame_ms_(KeyframeIntervalSettings::ParseFromFieldTrials()
-                                 .MaxWaitForFrameMs()
-                                 .value_or(kMaxWaitForFrameMs)),
+      max_wait_for_keyframe_ms_(kMaxWaitForKeyFrameMs),
+      max_wait_for_frame_ms_(kMaxWaitForFrameMs),
       low_latency_renderer_enabled_("enabled", true),
       low_latency_renderer_include_predecode_buffer_("include_predecode_buffer",
                                                      true),
@@ -557,8 +551,7 @@ void VideoReceiveStream2::RequestKeyFrame(int64_t timestamp_ms) {
   });
 }
 
-void VideoReceiveStream2::OnCompleteFrame(
-    std::unique_ptr<video_coding::EncodedFrame> frame) {
+void VideoReceiveStream2::OnCompleteFrame(std::unique_ptr<EncodedFrame> frame) {
   RTC_DCHECK_RUN_ON(&worker_sequence_checker_);
 
   // TODO(https://bugs.webrtc.org/9974): Consider removing this workaround.
@@ -725,7 +718,6 @@ void VideoReceiveStream2::HandleEncodedFrame(
       }));
 
   if (encoded_frame_buffer_function_) {
-    frame->Retain();
     encoded_frame_buffer_function_(WebRtcRecordableEncodedFrame(*frame));
   }
 }

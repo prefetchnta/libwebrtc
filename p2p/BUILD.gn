@@ -86,6 +86,8 @@ rtc_library("rtc_p2p") {
   ]
 
   deps = [
+    "../api:array_view",
+    "../api:async_dns_resolver",
     "../api:libjingle_peerconnection_api",
     "../api:packet_socket_factory",
     "../api:rtc_error",
@@ -93,6 +95,7 @@ rtc_library("rtc_p2p") {
     "../api:sequence_checker",
     "../api/crypto:options",
     "../api/rtc_event_log",
+    "../api/task_queue",
     "../api/transport:enums",
     "../api/transport:stun_types",
     "../logging:ice_log",
@@ -144,6 +147,8 @@ if (rtc_include_tests) {
       "../api:libjingle_peerconnection_api",
       "../rtc_base",
       "../rtc_base:rtc_base_approved",
+      "../rtc_base/task_utils:pending_task_safety_flag",
+      "../rtc_base/task_utils:to_queued_task",
     ]
     absl_deps = [
       "//third_party/abseil-cpp/absl/algorithm:container",
@@ -234,6 +239,7 @@ if (rtc_include_tests) {
       ":p2p_test_utils",
       ":rtc_p2p",
       "../api:libjingle_peerconnection_api",
+      "../api:mock_async_dns_resolver",
       "../api:packet_socket_factory",
       "../api:scoped_refptr",
       "../api/transport:stun_types",
@@ -284,9 +290,13 @@ rtc_library("p2p_server_utils") {
     "../rtc_base:rtc_base_tests_utils",
     "../rtc_base:socket_address",
     "../rtc_base:threading",
+    "../rtc_base/task_utils:to_queued_task",
     "../rtc_base/third_party/sigslot",
   ]
-  absl_deps = [ "//third_party/abseil-cpp/absl/algorithm:container" ]
+  absl_deps = [
+    "//third_party/abseil-cpp/absl/algorithm:container",
+    "//third_party/abseil-cpp/absl/memory",
+  ]
 }
 
 rtc_library("libstunprober") {
@@ -308,6 +318,8 @@ rtc_library("libstunprober") {
     "../rtc_base:socket_address",
     "../rtc_base:threading",
     "../rtc_base/system:rtc_export",
+    "../rtc_base/task_utils:pending_task_safety_flag",
+    "../rtc_base/task_utils:to_queued_task",
   ]
 }
 

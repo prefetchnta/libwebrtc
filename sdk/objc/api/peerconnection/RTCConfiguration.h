@@ -220,6 +220,19 @@ RTC_OBJC_EXPORT
  */
 @property(nonatomic, assign) int rtcpVideoReportIntervalMs;
 
+/**
+ * Allow implicit rollback of local description when remote description
+ * conflicts with local description.
+ * See: https://w3c.github.io/webrtc-pc/#dom-peerconnection-setremotedescription
+ */
+@property(nonatomic, assign) BOOL enableImplicitRollback;
+
+/**
+ * Control if "a=extmap-allow-mixed" is included in the offer.
+ * See: https://www.chromestatus.com/feature/6269234631933952
+ */
+@property(nonatomic, assign) BOOL offerExtmapAllowMixed;
+
 - (instancetype)init;
 
 @end

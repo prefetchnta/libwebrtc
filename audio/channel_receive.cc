@@ -695,8 +695,10 @@ void ChannelReceive::ReceivedRTCPPacket(const uint8_t* data, size_t length) {
   uint32_t ntp_secs = 0;
   uint32_t ntp_frac = 0;
   uint32_t rtp_timestamp = 0;
-  if (0 !=
-      rtp_rtcp_->RemoteNTP(&ntp_secs, &ntp_frac, NULL, NULL, &rtp_timestamp)) {
+  if (rtp_rtcp_->RemoteNTP(&ntp_secs, &ntp_frac,
+                           /*rtcp_arrival_time_secs=*/nullptr,
+                           /*rtcp_arrival_time_frac=*/nullptr,
+                           &rtp_timestamp) != 0) {
     // Waiting for RTCP.
     return;
   }
@@ -753,11 +755,10 @@ void ChannelReceive::ResetReceiverCongestionControlObjects() {
 
 CallReceiveStatistics ChannelReceive::GetRTCPStatistics() const {
   RTC_DCHECK(worker_thread_checker_.IsCurrent());
-  // --- RtcpStatistics
   CallReceiveStatistics stats;
 
-  // The jitter statistics is updated for each received RTP packet and is
-  // based on received packets.
+  // The jitter statistics is updated for each received RTP packet and is based
+  // on received packets.
   RtpReceiveStats rtp_stats;
   StreamStatistician* statistician =
       rtp_receive_statistics_->GetStatistician(remote_ssrc_);
@@ -768,10 +769,9 @@ CallReceiveStatistics ChannelReceive::GetRTCPStatistics() const {
   stats.cumulativeLost = rtp_stats.packets_lost;
   stats.jitterSamples = rtp_stats.jitter;
 
-  // --- RTT
   stats.rttMs = GetRTT();
 
-  // --- Data counters
+  // Data counters.
   if (statistician) {
     stats.payload_bytes_rcvd = rtp_stats.packet_counter.payload_bytes;
 
@@ -788,11 +788,28 @@ CallReceiveStatistics ChannelReceive::GetRTCPStatistics() const {
     stats.last_packet_received_timestamp_ms = absl::nullopt;
   }
 
-  // --- Timestamps
+  // Timestamps.
   {
     MutexLock lock(&ts_stats_lock_);
     stats.capture_start_ntp_time_ms_ = capture_start_ntp_time_ms_;
   }
+
+  absl::optional<RtpRtcpInterface::SenderReportStats> rtcp_sr_stats =
+      rtp_rtcp_->GetSenderReportStats();
+  if (rtcp_sr_stats.has_value()) {
+    // Number of seconds since 1900 January 1 00:00 GMT (see
+    // https://tools.ietf.org/html/rfc868).
+    constexpr int64_t kNtpJan1970Millisecs =
+        2208988800 * rtc::kNumMillisecsPerSec;
+    stats.last_sender_report_timestamp_ms =
+        rtcp_sr_stats->last_arrival_timestamp.ToMs() - kNtpJan1970Millisecs;
+    stats.last_sender_report_remote_timestamp_ms =
+        rtcp_sr_stats->last_remote_timestamp.ToMs() - kNtpJan1970Millisecs;
+    stats.sender_reports_packets_sent = rtcp_sr_stats->packets_sent;
+    stats.sender_reports_bytes_sent = rtcp_sr_stats->bytes_sent;
+    stats.sender_reports_reports_count = rtcp_sr_stats->reports_count;
+  }
+
   return stats;
 }
 
@@ -913,7 +930,9 @@ absl::optional<Syncable::Info> ChannelReceive::GetSyncInfo() const {
   RTC_DCHECK(module_process_thread_checker_.IsCurrent());
   Syncable::Info info;
   if (rtp_rtcp_->RemoteNTP(&info.capture_time_ntp_secs,
-                           &info.capture_time_ntp_frac, nullptr, nullptr,
+                           &info.capture_time_ntp_frac,
+                           /*rtcp_arrival_time_secs=*/nullptr,
+                           /*rtcp_arrival_time_frac=*/nullptr,
                            &info.capture_time_source_clock) != 0) {
     return absl::nullopt;
   }
@@ -976,11 +995,9 @@ int ChannelReceive::GetRtpTimestampRateHz() const {
 }
 
 int64_t ChannelReceive::GetRTT() const {
-  std::vector<RTCPReportBlock> report_blocks;
-  rtp_rtcp_->RemoteRTCPStat(&report_blocks);
+  std::vector<ReportBlockData> report_blocks =
+      rtp_rtcp_->GetLatestReportBlockData();
 
-  // TODO(nisse): Could we check the return value from the ->RTT() call below,
-  // instead of checking if we have any report blocks?
   if (report_blocks.empty()) {
     MutexLock lock(&assoc_send_channel_lock_);
     // Tries to get RTT from an associated channel.
@@ -990,16 +1007,14 @@ int64_t ChannelReceive::GetRTT() const {
     return associated_send_channel_->GetRTT();
   }
 
-  int64_t rtt = 0;
-  int64_t avg_rtt = 0;
-  int64_t max_rtt = 0;
-  int64_t min_rtt = 0;
   // TODO(nisse): This method computes RTT based on sender reports, even though
   // a receive stream is not supposed to do that.
-  if (rtp_rtcp_->RTT(remote_ssrc_, &rtt, &avg_rtt, &min_rtt, &max_rtt) != 0) {
-    return 0;
+  for (const ReportBlockData& data : report_blocks) {
+    if (data.report_block().sender_ssrc == remote_ssrc_) {
+      return data.last_rtt_ms();
+    }
   }
-  return rtt;
+  return 0;
 }
 
 }  // namespace
