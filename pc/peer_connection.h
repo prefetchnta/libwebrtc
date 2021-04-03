@@ -23,7 +23,6 @@
 
 #include "absl/types/optional.h"
 #include "api/adaptation/resource.h"
-#include "api/async_dns_resolver.h"
 #include "api/async_resolver_factory.h"
 #include "api/audio_options.h"
 #include "api/candidate.h"
@@ -272,7 +271,6 @@ class PeerConnection : public PeerConnectionInternal,
   rtc::Thread* worker_thread() const final { return context_->worker_thread(); }
 
   std::string session_id() const override {
-    RTC_DCHECK_RUN_ON(signaling_thread());
     return session_id_;
   }
 
@@ -325,7 +323,8 @@ class PeerConnection : public PeerConnectionInternal,
   PeerConnectionObserver* Observer() const;
   bool IsClosed() const {
     RTC_DCHECK_RUN_ON(signaling_thread());
-    return sdp_handler_->signaling_state() == PeerConnectionInterface::kClosed;
+    return !sdp_handler_ ||
+           sdp_handler_->signaling_state() == PeerConnectionInterface::kClosed;
   }
   // Get current SSL role used by SCTP's underlying transport.
   bool GetSctpSslRole(rtc::SSLRole* role);
@@ -437,7 +436,7 @@ class PeerConnection : public PeerConnectionInternal,
 
   // Returns true if SRTP (either using DTLS-SRTP or SDES) is required by
   // this session.
-  bool SrtpRequired() const RTC_RUN_ON(signaling_thread());
+  bool SrtpRequired() const;
 
   void OnSentPacket_w(const rtc::SentPacket& sent_packet);
 
@@ -636,8 +635,11 @@ class PeerConnection : public PeerConnectionInternal,
   PeerConnectionInterface::RTCConfiguration configuration_
       RTC_GUARDED_BY(signaling_thread());
 
-  const std::unique_ptr<AsyncDnsResolverFactoryInterface>
-      async_dns_resolver_factory_;
+  // TODO(zstein): |async_resolver_factory_| can currently be nullptr if it
+  // is not injected. It should be required once chromium supplies it.
+  // This member variable is only used by JsepTransportController so we should
+  // consider moving ownership to there.
+  const std::unique_ptr<AsyncResolverFactory> async_resolver_factory_;
   std::unique_ptr<cricket::PortAllocator>
       port_allocator_;  // TODO(bugs.webrtc.org/9987): Accessed on both
                         // signaling and network thread.
@@ -668,7 +670,7 @@ class PeerConnection : public PeerConnectionInternal,
   rtc::scoped_refptr<RTCStatsCollector> stats_collector_
       RTC_GUARDED_BY(signaling_thread());
 
-  std::string session_id_ RTC_GUARDED_BY(signaling_thread());
+  const std::string session_id_;
 
   std::unique_ptr<JsepTransportController>
       transport_controller_;  // TODO(bugs.webrtc.org/9987): Accessed on both
