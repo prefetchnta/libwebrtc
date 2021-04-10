@@ -39,11 +39,11 @@ namespace webrtc {
 JsepTransportController::JsepTransportController(
     rtc::Thread* network_thread,
     cricket::PortAllocator* port_allocator,
-    AsyncResolverFactory* async_resolver_factory,
+    AsyncDnsResolverFactoryInterface* async_dns_resolver_factory,
     Config config)
     : network_thread_(network_thread),
       port_allocator_(port_allocator),
-      async_resolver_factory_(async_resolver_factory),
+      async_dns_resolver_factory_(async_dns_resolver_factory),
       config_(config),
       active_reset_srtp_params_(config.active_reset_srtp_params) {
   // The |transport_observer| is assumed to be non-null.
@@ -153,11 +153,7 @@ rtc::scoped_refptr<SctpTransport> JsepTransportController::GetSctpTransport(
 }
 
 void JsepTransportController::SetIceConfig(const cricket::IceConfig& config) {
-  if (!network_thread_->IsCurrent()) {
-    network_thread_->Invoke<void>(RTC_FROM_HERE, [&] { SetIceConfig(config); });
-    return;
-  }
-
+  RTC_DCHECK_RUN_ON(network_thread_);
   ice_config_ = config;
   for (auto& dtls : GetDtlsTransports()) {
     dtls->ice_transport()->SetIceConfig(ice_config_);
@@ -233,11 +229,6 @@ bool JsepTransportController::SetLocalCertificate(
 rtc::scoped_refptr<rtc::RTCCertificate>
 JsepTransportController::GetLocalCertificate(
     const std::string& transport_name) const {
-  if (!network_thread_->IsCurrent()) {
-    return network_thread_->Invoke<rtc::scoped_refptr<rtc::RTCCertificate>>(
-        RTC_FROM_HERE, [&] { return GetLocalCertificate(transport_name); });
-  }
-
   RTC_DCHECK_RUN_ON(network_thread_);
 
   const cricket::JsepTransport* t = GetJsepTransportByName(transport_name);
@@ -250,10 +241,6 @@ JsepTransportController::GetLocalCertificate(
 std::unique_ptr<rtc::SSLCertChain>
 JsepTransportController::GetRemoteSSLCertChain(
     const std::string& transport_name) const {
-  if (!network_thread_->IsCurrent()) {
-    return network_thread_->Invoke<std::unique_ptr<rtc::SSLCertChain>>(
-        RTC_FROM_HERE, [&] { return GetRemoteSSLCertChain(transport_name); });
-  }
   RTC_DCHECK_RUN_ON(network_thread_);
 
   // Get the certificate from the RTP transport's DTLS handshake. Should be
@@ -398,7 +385,7 @@ JsepTransportController::CreateIceTransport(const std::string& transport_name,
 
   IceTransportInit init;
   init.set_port_allocator(port_allocator_);
-  init.set_async_resolver_factory(async_resolver_factory_);
+  init.set_async_dns_resolver_factory(async_dns_resolver_factory_);
   init.set_event_log(config_.event_log);
   return config_.ice_transport_factory->CreateIceTransport(
       transport_name, component, std::move(init));
@@ -414,14 +401,14 @@ JsepTransportController::CreateDtlsTransport(
 
   if (config_.dtls_transport_factory) {
     dtls = config_.dtls_transport_factory->CreateDtlsTransport(
-        ice, config_.crypto_options);
+        ice, config_.crypto_options, config_.ssl_max_version);
   } else {
     dtls = std::make_unique<cricket::DtlsTransport>(ice, config_.crypto_options,
-                                                    config_.event_log);
+                                                    config_.event_log,
+                                                    config_.ssl_max_version);
   }
 
   RTC_DCHECK(dtls);
-  dtls->SetSslMaxProtocolVersion(config_.ssl_max_version);
   dtls->ice_transport()->SetIceRole(ice_role_);
   dtls->ice_transport()->SetIceTiebreaker(ice_tiebreaker_);
   dtls->ice_transport()->SetIceConfig(ice_config_);

@@ -23,6 +23,7 @@
 
 #include "absl/types/optional.h"
 #include "api/adaptation/resource.h"
+#include "api/async_dns_resolver.h"
 #include "api/async_resolver_factory.h"
 #include "api/audio_options.h"
 #include "api/candidate.h"
@@ -442,6 +443,8 @@ class PeerConnection : public PeerConnectionInternal,
 
   bool SetupDataChannelTransport_n(const std::string& mid)
       RTC_RUN_ON(network_thread());
+  void SetupRtpDataChannelTransport_n(cricket::RtpDataChannel* data_channel)
+      RTC_RUN_ON(network_thread());
   void TeardownDataChannelTransport_n() RTC_RUN_ON(network_thread());
   cricket::ChannelInterface* GetChannel(const std::string& content_name);
 
@@ -577,7 +580,7 @@ class PeerConnection : public PeerConnectionInternal,
 
   // Invoked when TransportController connection completion is signaled.
   // Reports stats for all transports in use.
-  void ReportTransportStats() RTC_RUN_ON(signaling_thread());
+  void ReportTransportStats() RTC_RUN_ON(network_thread());
 
   // Gather the usage of IPv4/IPv6 as best connection.
   static void ReportBestConnectionState(const cricket::TransportStats& stats);
@@ -635,11 +638,8 @@ class PeerConnection : public PeerConnectionInternal,
   PeerConnectionInterface::RTCConfiguration configuration_
       RTC_GUARDED_BY(signaling_thread());
 
-  // TODO(zstein): |async_resolver_factory_| can currently be nullptr if it
-  // is not injected. It should be required once chromium supplies it.
-  // This member variable is only used by JsepTransportController so we should
-  // consider moving ownership to there.
-  const std::unique_ptr<AsyncResolverFactory> async_resolver_factory_;
+  const std::unique_ptr<AsyncDnsResolverFactoryInterface>
+      async_dns_resolver_factory_;
   std::unique_ptr<cricket::PortAllocator>
       port_allocator_;  // TODO(bugs.webrtc.org/9987): Accessed on both
                         // signaling and network thread.

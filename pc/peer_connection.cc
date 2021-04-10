@@ -12,6 +12,7 @@
 
 #include <limits.h>
 #include <stddef.h>
+
 #include <algorithm>
 #include <memory>
 #include <set>
@@ -33,6 +34,7 @@
 #include "media/base/rid_description.h"
 #include "media/base/stream_params.h"
 #include "modules/rtp_rtcp/include/rtp_rtcp_defines.h"
+#include "p2p/base/basic_async_resolver_factory.h"
 #include "p2p/base/connection.h"
 #include "p2p/base/connection_info.h"
 #include "p2p/base/dtls_transport_internal.h"
@@ -435,6 +437,30 @@ RTCErrorOr<rtc::scoped_refptr<PeerConnection>> PeerConnection::Create(
   bool is_unified_plan =
       configuration.sdp_semantics == SdpSemantics::kUnifiedPlan;
   bool dtls_enabled = DtlsEnabled(configuration, options, dependencies);
+
+  // Interim code: If an AsyncResolverFactory is given, but not an
+  // AsyncDnsResolverFactory, wrap it in a WrappingAsyncDnsResolverFactory
+  // If neither is given, create a WrappingAsyncDnsResolverFactory wrapping
+  // a BasicAsyncResolver.
+  // TODO(bugs.webrtc.org/12598): Remove code once all callers pass a
+  // AsyncDnsResolverFactory.
+  if (dependencies.async_dns_resolver_factory &&
+      dependencies.async_resolver_factory) {
+    RTC_LOG(LS_ERROR)
+        << "Attempt to set both old and new type of DNS resolver factory";
+    return RTCError(RTCErrorType::INVALID_PARAMETER,
+                    "Both old and new type of DNS resolver given");
+  }
+  if (dependencies.async_resolver_factory) {
+    dependencies.async_dns_resolver_factory =
+        std::make_unique<WrappingAsyncDnsResolverFactory>(
+            std::move(dependencies.async_resolver_factory));
+  } else {
+    dependencies.async_dns_resolver_factory =
+        std::make_unique<WrappingAsyncDnsResolverFactory>(
+            std::make_unique<BasicAsyncResolverFactory>());
+  }
+
   // The PeerConnection constructor consumes some, but not all, dependencies.
   rtc::scoped_refptr<PeerConnection> pc(
       new rtc::RefCountedObject<PeerConnection>(
@@ -462,7 +488,8 @@ PeerConnection::PeerConnection(
       is_unified_plan_(is_unified_plan),
       event_log_(std::move(event_log)),
       event_log_ptr_(event_log_.get()),
-      async_resolver_factory_(std::move(dependencies.async_resolver_factory)),
+      async_dns_resolver_factory_(
+          std::move(dependencies.async_dns_resolver_factory)),
       port_allocator_(std::move(dependencies.allocator)),
       ice_transport_factory_(std::move(dependencies.ice_transport_factory)),
       tls_cert_verifier_(std::move(dependencies.tls_cert_verifier)),
@@ -522,11 +549,13 @@ PeerConnection::~PeerConnection() {
   // should be destroyed there.
   network_thread()->Invoke<void>(RTC_FROM_HERE, [this] {
     RTC_DCHECK_RUN_ON(network_thread());
+    TeardownDataChannelTransport_n();
     transport_controller_.reset();
     port_allocator_.reset();
     if (network_thread_safety_)
       network_thread_safety_->SetNotAlive();
   });
+
   // call_ and event_log_ must be destroyed on the worker thread.
   worker_thread()->Invoke<void>(RTC_FROM_HERE, [this] {
     RTC_DCHECK_RUN_ON(worker_thread());
@@ -670,11 +699,14 @@ void PeerConnection::InitializeTransportController_n(
 
   transport_controller_.reset(
       new JsepTransportController(network_thread(), port_allocator_.get(),
-                                  async_resolver_factory_.get(), config));
+                                  async_dns_resolver_factory_.get(), config));
 
   transport_controller_->SubscribeIceConnectionState(
       [this](cricket::IceConnectionState s) {
         RTC_DCHECK_RUN_ON(network_thread());
+        if (s == cricket::kIceConnectionConnected) {
+          ReportTransportStats();
+        }
         signaling_thread()->PostTask(
             ToQueuedTask(signaling_thread_safety_.flag(), [this, s]() {
               RTC_DCHECK_RUN_ON(signaling_thread());
@@ -1124,6 +1156,8 @@ bool PeerConnection::GetStats(StatsObserver* observer,
     return false;
   }
 
+  RTC_LOG_THREAD_BLOCK_COUNT();
+
   stats_->UpdateStats(level);
   // The StatsCollector is used to tell if a track is valid because it may
   // remember tracks that the PeerConnection previously removed.
@@ -1133,6 +1167,7 @@ bool PeerConnection::GetStats(StatsObserver* observer,
     return false;
   }
   message_handler_.PostGetStats(observer, stats_.get(), track);
+
   return true;
 }
 
@@ -1141,6 +1176,7 @@ void PeerConnection::GetStats(RTCStatsCollectorCallback* callback) {
   RTC_DCHECK_RUN_ON(signaling_thread());
   RTC_DCHECK(stats_collector_);
   RTC_DCHECK(callback);
+  RTC_LOG_THREAD_BLOCK_COUNT();
   stats_collector_->GetStatsReport(callback);
 }
 
@@ -1685,6 +1721,8 @@ void PeerConnection::Close() {
   RTC_DCHECK_RUN_ON(signaling_thread());
   TRACE_EVENT0("webrtc", "PeerConnection::Close");
 
+  RTC_LOG_THREAD_BLOCK_COUNT();
+
   if (IsClosed()) {
     return;
   }
@@ -1728,6 +1766,12 @@ void PeerConnection::Close() {
   rtp_manager_->Close();
 
   network_thread()->Invoke<void>(RTC_FROM_HERE, [this] {
+    // Data channels will already have been unset via the DestroyAllChannels()
+    // call above, which triggers a call to TeardownDataChannelTransport_n().
+    // TODO(tommi): ^^ That's not exactly optimal since this is yet another
+    // blocking hop to the network thread during Close(). Further still, the
+    // voice/video/data channels will be cleared on the worker thread.
+    RTC_DCHECK(!data_channel_controller_.rtp_data_channel());
     transport_controller_.reset();
     port_allocator_->DiscardCandidatePool();
     if (network_thread_safety_) {
@@ -2146,17 +2190,22 @@ absl::optional<std::string> PeerConnection::sctp_transport_name() const {
 }
 
 cricket::CandidateStatsList PeerConnection::GetPooledCandidateStats() const {
+  RTC_DCHECK_RUN_ON(network_thread());
+  if (!network_thread_safety_->alive())
+    return {};
   cricket::CandidateStatsList candidate_states_list;
-  network_thread()->Invoke<void>(RTC_FROM_HERE, [this, &candidate_states_list] {
-    port_allocator_->GetCandidateStatsFromPooledSessions(
-        &candidate_states_list);
-  });
+  port_allocator_->GetCandidateStatsFromPooledSessions(&candidate_states_list);
   return candidate_states_list;
 }
 
 std::map<std::string, std::string> PeerConnection::GetTransportNamesByMid()
     const {
-  RTC_DCHECK_RUN_ON(signaling_thread());
+  RTC_DCHECK_RUN_ON(network_thread());
+  rtc::Thread::ScopedDisallowBlockingCalls no_blocking_calls;
+
+  if (!network_thread_safety_->alive())
+    return {};
+
   std::map<std::string, std::string> transport_names_by_mid;
   for (const auto& transceiver : rtp_manager()->transceivers()->List()) {
     cricket::ChannelInterface* channel = transceiver->internal()->channel();
@@ -2170,10 +2219,10 @@ std::map<std::string, std::string> PeerConnection::GetTransportNamesByMid()
                                ->content_name()] =
         data_channel_controller_.rtp_data_channel()->transport_name();
   }
-  if (data_channel_controller_.data_channel_transport()) {
-    absl::optional<std::string> transport_name = sctp_transport_name();
-    RTC_DCHECK(transport_name);
-    transport_names_by_mid[*sctp_mid_s_] = *transport_name;
+  if (sctp_mid_n_) {
+    cricket::DtlsTransportInternal* dtls_transport =
+        transport_controller_->GetDtlsTransport(*sctp_mid_n_);
+    transport_names_by_mid[*sctp_mid_n_] = dtls_transport->transport_name();
   }
   return transport_names_by_mid;
 }
@@ -2181,13 +2230,11 @@ std::map<std::string, std::string> PeerConnection::GetTransportNamesByMid()
 std::map<std::string, cricket::TransportStats>
 PeerConnection::GetTransportStatsByNames(
     const std::set<std::string>& transport_names) {
-  if (!network_thread()->IsCurrent()) {
-    return network_thread()
-        ->Invoke<std::map<std::string, cricket::TransportStats>>(
-            RTC_FROM_HERE,
-            [&] { return GetTransportStatsByNames(transport_names); });
-  }
   RTC_DCHECK_RUN_ON(network_thread());
+  if (!network_thread_safety_->alive())
+    return {};
+
+  rtc::Thread::ScopedDisallowBlockingCalls no_blocking_calls;
   std::map<std::string, cricket::TransportStats> transport_stats_by_name;
   for (const std::string& transport_name : transport_names) {
     cricket::TransportStats transport_stats;
@@ -2206,7 +2253,8 @@ PeerConnection::GetTransportStatsByNames(
 bool PeerConnection::GetLocalCertificate(
     const std::string& transport_name,
     rtc::scoped_refptr<rtc::RTCCertificate>* certificate) {
-  if (!certificate) {
+  RTC_DCHECK_RUN_ON(network_thread());
+  if (!network_thread_safety_->alive() || !certificate) {
     return false;
   }
   *certificate = transport_controller_->GetLocalCertificate(transport_name);
@@ -2215,6 +2263,7 @@ bool PeerConnection::GetLocalCertificate(
 
 std::unique_ptr<rtc::SSLCertChain> PeerConnection::GetRemoteSSLCertChain(
     const std::string& transport_name) {
+  RTC_DCHECK_RUN_ON(network_thread());
   return transport_controller_->GetRemoteSSLCertChain(transport_name);
 }
 
@@ -2271,8 +2320,8 @@ void PeerConnection::OnTransportControllerConnectionState(
         SetIceConnectionState(PeerConnectionInterface::kIceConnectionConnected);
       }
       SetIceConnectionState(PeerConnectionInterface::kIceConnectionCompleted);
+
       NoteUsageEvent(UsageEvent::ICE_STATE_CONNECTED);
-      ReportTransportStats();
       break;
     default:
       RTC_NOTREACHED();
@@ -2383,7 +2432,8 @@ bool PeerConnection::SetupDataChannelTransport_n(const std::string& mid) {
   data_channel_controller_.set_data_channel_transport(transport);
   data_channel_controller_.SetupDataChannelTransport_n();
   sctp_mid_n_ = mid;
-  auto dtls_transport = transport_controller_->GetDtlsTransport(mid);
+  cricket::DtlsTransportInternal* dtls_transport =
+      transport_controller_->GetDtlsTransport(mid);
   if (dtls_transport) {
     signaling_thread()->PostTask(
         ToQueuedTask(signaling_thread_safety_.flag(),
@@ -2401,16 +2451,30 @@ bool PeerConnection::SetupDataChannelTransport_n(const std::string& mid) {
   return true;
 }
 
-void PeerConnection::TeardownDataChannelTransport_n() {
-  if (!sctp_mid_n_ && !data_channel_controller_.data_channel_transport()) {
+void PeerConnection::SetupRtpDataChannelTransport_n(
+    cricket::RtpDataChannel* data_channel) {
+  data_channel_controller_.set_rtp_data_channel(data_channel);
+  if (!data_channel)
     return;
-  }
-  RTC_LOG(LS_INFO) << "Tearing down data channel transport for mid="
-                   << *sctp_mid_n_;
 
-  // |sctp_mid_| may still be active through an SCTP transport.  If not, unset
-  // it.
-  sctp_mid_n_.reset();
+  // TODO(bugs.webrtc.org/9987): OnSentPacket_w needs to be changed to
+  // OnSentPacket_n (and be called on the network thread).
+  data_channel->SignalSentPacket().connect(this,
+                                           &PeerConnection::OnSentPacket_w);
+}
+
+void PeerConnection::TeardownDataChannelTransport_n() {
+  // Clear the RTP data channel if any.
+  data_channel_controller_.set_rtp_data_channel(nullptr);
+
+  if (sctp_mid_n_) {
+    // |sctp_mid_| may still be active through an SCTP transport.  If not, unset
+    // it.
+    RTC_LOG(LS_INFO) << "Tearing down data channel transport for mid="
+                     << *sctp_mid_n_;
+    sctp_mid_n_.reset();
+  }
+
   data_channel_controller_.TeardownDataChannelTransport_n();
 }
 
@@ -2632,6 +2696,7 @@ void PeerConnection::OnTransportControllerGatheringState(
   }
 }
 
+// Runs on network_thread().
 void PeerConnection::ReportTransportStats() {
   rtc::Thread::ScopedDisallowBlockingCalls no_blocking_calls;
   std::map<std::string, std::set<cricket::MediaType>>
@@ -2644,33 +2709,32 @@ void PeerConnection::ReportTransportStats() {
           transceiver->media_type());
     }
   }
+
   if (rtp_data_channel()) {
     media_types_by_transport_name[rtp_data_channel()->transport_name()].insert(
         cricket::MEDIA_TYPE_DATA);
   }
 
-  absl::optional<std::string> transport_name = sctp_transport_name();
-  if (transport_name) {
-    media_types_by_transport_name[*transport_name].insert(
-        cricket::MEDIA_TYPE_DATA);
+  if (sctp_mid_n_) {
+    cricket::DtlsTransportInternal* dtls_transport =
+        transport_controller_->GetDtlsTransport(*sctp_mid_n_);
+    if (dtls_transport) {
+      media_types_by_transport_name[dtls_transport->transport_name()].insert(
+          cricket::MEDIA_TYPE_DATA);
+    }
   }
 
-  // Run the loop that reports the state on the network thread since the
-  // transport controller requires the stats to be read there (GetStats()).
-  network_thread()->PostTask(ToQueuedTask(
-      network_thread_safety_, [this, media_types_by_transport_name = std::move(
-                                         media_types_by_transport_name)] {
-        for (const auto& entry : media_types_by_transport_name) {
-          const std::string& transport_name = entry.first;
-          const std::set<cricket::MediaType> media_types = entry.second;
-          cricket::TransportStats stats;
-          if (transport_controller_->GetStats(transport_name, &stats)) {
-            ReportBestConnectionState(stats);
-            ReportNegotiatedCiphers(dtls_enabled_, stats, media_types);
-          }
-        }
-      }));
+  for (const auto& entry : media_types_by_transport_name) {
+    const std::string& transport_name = entry.first;
+    const std::set<cricket::MediaType> media_types = entry.second;
+    cricket::TransportStats stats;
+    if (transport_controller_->GetStats(transport_name, &stats)) {
+      ReportBestConnectionState(stats);
+      ReportNegotiatedCiphers(dtls_enabled_, stats, media_types);
+    }
+  }
 }
+
 // Walk through the ConnectionInfos to gather best connection usage
 // for IPv4 and IPv6.
 // static (no member state required)

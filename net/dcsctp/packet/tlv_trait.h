@@ -28,7 +28,7 @@ namespace dcsctp {
 namespace tlv_trait_impl {
 // Logging functions, only to be used by TLVTrait, which is a templated class.
 void ReportInvalidSize(size_t actual_size, size_t expected_size);
-void ReportInvalidType(int acutal_type, int expected_type);
+void ReportInvalidType(int actual_type, int expected_type);
 void ReportInvalidFixedLengthField(size_t value, size_t expected);
 void ReportInvalidVariableLengthField(size_t value, size_t available);
 void ReportInvalidPadding(size_t padding_bytes);
@@ -105,7 +105,7 @@ class TLVTrait {
       }
     } else {
       // Expect variable length data - verify its size alignment.
-      if (length > data.size()) {
+      if (length > data.size() || length < Config::kHeaderSize) {
         tlv_trait_impl::ReportInvalidVariableLengthField(length, data.size());
         return absl::nullopt;
       }
@@ -116,7 +116,7 @@ class TLVTrait {
         tlv_trait_impl::ReportInvalidPadding(padding);
         return absl::nullopt;
       }
-      if ((length % Config::kVariableLengthAlignment) != 0) {
+      if (!ValidateLengthAlignment(length, Config::kVariableLengthAlignment)) {
         tlv_trait_impl::ReportInvalidLengthMultiple(
             length, Config::kVariableLengthAlignment);
         return absl::nullopt;
@@ -146,6 +146,16 @@ class TLVTrait {
 
     return BoundedByteWriter<Config::kHeaderSize>(
         rtc::ArrayView<uint8_t>(out.data() + offset, size));
+  }
+
+ private:
+  static bool ValidateLengthAlignment(uint16_t length, size_t alignment) {
+    // This is to avoid MSVC believing there could be a "mod by zero", when it
+    // certainly can't.
+    if (alignment == 0) {
+      return true;
+    }
+    return (length % alignment) == 0;
   }
 };
 

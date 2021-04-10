@@ -1423,8 +1423,15 @@ RTCError SdpOfferAnswerHandler::ApplyLocalDescription(
         const std::vector<StreamParams>& streams = channel->local_streams();
         transceiver->internal()->sender_internal()->set_stream_ids(
             streams[0].stream_ids());
+        auto encodings =
+            transceiver->internal()->sender_internal()->init_send_encodings();
         transceiver->internal()->sender_internal()->SetSsrc(
             streams[0].first_ssrc());
+        if (!encodings.empty()) {
+          transceivers()
+              ->StableState(transceiver)
+              ->SetInitSendEncodings(encodings);
+        }
       }
     }
   } else {
@@ -2721,6 +2728,10 @@ RTCError SdpOfferAnswerHandler::Rollback(SdpType desc_type) {
       } else {
         transceivers()->Remove(transceiver);
       }
+    }
+    if (state.init_send_encodings()) {
+      transceiver->internal()->sender_internal()->set_init_send_encodings(
+          state.init_send_encodings().value());
     }
     transceiver->internal()->sender_internal()->set_transport(nullptr);
     transceiver->internal()->receiver_internal()->set_transport(nullptr);
@@ -4521,16 +4532,7 @@ bool SdpOfferAnswerHandler::ReadyToUseRemoteCandidate(
     return false;
   }
 
-  bool has_transport = false;
-  cricket::ChannelInterface* channel = pc_->GetChannel(result.value()->name);
-  if (channel) {
-    has_transport = !channel->transport_name().empty();
-  } else if (data_channel_controller()->data_channel_transport()) {
-    auto sctp_mid = pc_->sctp_mid();
-    RTC_DCHECK(sctp_mid);
-    has_transport = (result.value()->name == *sctp_mid);
-  }
-  return has_transport;
+  return true;
 }
 
 RTCErrorOr<const cricket::ContentInfo*> SdpOfferAnswerHandler::FindContentInfo(
@@ -4612,6 +4614,9 @@ RTCError SdpOfferAnswerHandler::CreateChannels(const SessionDescription& desc) {
 cricket::VoiceChannel* SdpOfferAnswerHandler::CreateVoiceChannel(
     const std::string& mid) {
   RTC_DCHECK_RUN_ON(signaling_thread());
+  if (!channel_manager()->media_engine())
+    return nullptr;
+
   RtpTransportInternal* rtp_transport = pc_->GetRtpTransport(mid);
 
   // TODO(bugs.webrtc.org/11992): CreateVoiceChannel internally switches to the
@@ -4627,8 +4632,6 @@ cricket::VoiceChannel* SdpOfferAnswerHandler::CreateVoiceChannel(
   }
   voice_channel->SignalSentPacket().connect(pc_,
                                             &PeerConnection::OnSentPacket_w);
-  voice_channel->SetRtpTransport(rtp_transport);
-
   return voice_channel;
 }
 
@@ -4636,6 +4639,9 @@ cricket::VoiceChannel* SdpOfferAnswerHandler::CreateVoiceChannel(
 cricket::VideoChannel* SdpOfferAnswerHandler::CreateVideoChannel(
     const std::string& mid) {
   RTC_DCHECK_RUN_ON(signaling_thread());
+  if (!channel_manager()->media_engine())
+    return nullptr;
+
   // NOTE: This involves a non-ideal hop (Invoke) over to the network thread.
   RtpTransportInternal* rtp_transport = pc_->GetRtpTransport(mid);
 
@@ -4652,8 +4658,6 @@ cricket::VideoChannel* SdpOfferAnswerHandler::CreateVideoChannel(
   }
   video_channel->SignalSentPacket().connect(pc_,
                                             &PeerConnection::OnSentPacket_w);
-  video_channel->SetRtpTransport(rtp_transport);
-
   return video_channel;
 }
 
@@ -4661,77 +4665,102 @@ bool SdpOfferAnswerHandler::CreateDataChannel(const std::string& mid) {
   RTC_DCHECK_RUN_ON(signaling_thread());
   switch (pc_->data_channel_type()) {
     case cricket::DCT_SCTP:
-      if (pc_->network_thread()->Invoke<bool>(RTC_FROM_HERE, [this, &mid] {
+      if (!pc_->network_thread()->Invoke<bool>(RTC_FROM_HERE, [this, &mid] {
             RTC_DCHECK_RUN_ON(pc_->network_thread());
             return pc_->SetupDataChannelTransport_n(mid);
           })) {
-        pc_->SetSctpDataMid(mid);
-      } else {
         return false;
       }
-      return true;
+      // TODO(tommi): Is this necessary? SetupDataChannelTransport_n() above
+      // will have queued up updating the transport name on the signaling thread
+      // and could update the mid at the same time. This here is synchronous
+      // though, but it changes the state of PeerConnection and makes it be
+      // out of sync (transport name not set while the mid is set).
+      pc_->SetSctpDataMid(mid);
+      break;
     case cricket::DCT_RTP:
     default:
       RtpTransportInternal* rtp_transport = pc_->GetRtpTransport(mid);
-      // TODO(bugs.webrtc.org/9987): set_rtp_data_channel() should be called on
-      // the network thread like set_data_channel_transport is.
-      data_channel_controller()->set_rtp_data_channel(
+      cricket::RtpDataChannel* data_channel =
           channel_manager()->CreateRtpDataChannel(
               pc_->configuration()->media_config, rtp_transport,
               signaling_thread(), mid, pc_->SrtpRequired(),
-              pc_->GetCryptoOptions(), &ssrc_generator_));
-
-      if (!data_channel_controller()->rtp_data_channel()) {
+              pc_->GetCryptoOptions(), &ssrc_generator_);
+      if (!data_channel)
         return false;
-      }
-      data_channel_controller()->rtp_data_channel()->SignalSentPacket().connect(
-          pc_, &PeerConnection::OnSentPacket_w);
-      data_channel_controller()->rtp_data_channel()->SetRtpTransport(
-          rtp_transport);
+
+      pc_->network_thread()->Invoke<void>(RTC_FROM_HERE, [this, data_channel] {
+        RTC_DCHECK_RUN_ON(pc_->network_thread());
+        pc_->SetupRtpDataChannelTransport_n(data_channel);
+      });
       have_pending_rtp_data_channel_ = true;
-      return true;
+      break;
   }
-  return false;
+  return true;
 }
 
 void SdpOfferAnswerHandler::DestroyTransceiverChannel(
     rtc::scoped_refptr<RtpTransceiverProxyWithInternal<RtpTransceiver>>
         transceiver) {
   RTC_DCHECK(transceiver);
+  RTC_LOG_THREAD_BLOCK_COUNT();
+
+  // TODO(tommi): We're currently on the signaling thread.
+  // There are multiple hops to the worker ahead.
+  // Consider if we can make the call to SetChannel() on the worker thread
+  // (and require that to be the context it's always called in) and also
+  // call DestroyChannelInterface there, since it also needs to hop to the
+  // worker.
 
   cricket::ChannelInterface* channel = transceiver->internal()->channel();
+  RTC_DCHECK_BLOCK_COUNT_NO_MORE_THAN(0);
   if (channel) {
+    // TODO(tommi): VideoRtpReceiver::SetMediaChannel blocks and jumps to the
+    // worker thread. When being set to nullptr, there are additional blocking
+    // calls to e.g. ClearRecordableEncodedFrameCallback which triggers another
+    // blocking call or Stop() for video channels.
     transceiver->internal()->SetChannel(nullptr);
+    RTC_DCHECK_BLOCK_COUNT_NO_MORE_THAN(2);
+    // TODO(tommi): All channel objects end up getting deleted on the
+    // worker thread. Can DestroyTransceiverChannel be purely posted to the
+    // worker?
     DestroyChannelInterface(channel);
+    RTC_DCHECK_BLOCK_COUNT_NO_MORE_THAN(3);
   }
 }
 
 void SdpOfferAnswerHandler::DestroyDataChannelTransport() {
   RTC_DCHECK_RUN_ON(signaling_thread());
-  if (data_channel_controller()->rtp_data_channel()) {
-    data_channel_controller()->OnTransportChannelClosed();
-    DestroyChannelInterface(data_channel_controller()->rtp_data_channel());
-    data_channel_controller()->set_rtp_data_channel(nullptr);
-  }
+  const bool has_sctp = pc_->sctp_mid().has_value();
+  auto* rtp_data_channel = data_channel_controller()->rtp_data_channel();
 
-  if (pc_->sctp_mid()) {
-    RTC_DCHECK_RUN_ON(pc_->signaling_thread());
+  if (has_sctp || rtp_data_channel)
     data_channel_controller()->OnTransportChannelClosed();
-    pc_->network_thread()->Invoke<void>(RTC_FROM_HERE, [this] {
-      RTC_DCHECK_RUN_ON(pc_->network_thread());
-      pc_->TeardownDataChannelTransport_n();
-    });
+
+  pc_->network_thread()->Invoke<void>(RTC_FROM_HERE, [this] {
+    RTC_DCHECK_RUN_ON(pc_->network_thread());
+    pc_->TeardownDataChannelTransport_n();
+  });
+
+  if (has_sctp)
     pc_->ResetSctpDataMid();
-  }
+
+  if (rtp_data_channel)
+    DestroyChannelInterface(rtp_data_channel);
 }
 
 void SdpOfferAnswerHandler::DestroyChannelInterface(
     cricket::ChannelInterface* channel) {
+  RTC_DCHECK_RUN_ON(signaling_thread());
+  RTC_DCHECK(channel_manager()->media_engine());
+  RTC_DCHECK(channel);
+
   // TODO(bugs.webrtc.org/11992): All the below methods should be called on the
   // worker thread. (they switch internally anyway). Change
   // DestroyChannelInterface to either be called on the worker thread, or do
   // this asynchronously on the worker.
-  RTC_DCHECK(channel);
+  RTC_LOG_THREAD_BLOCK_COUNT();
+
   switch (channel->media_type()) {
     case cricket::MEDIA_TYPE_AUDIO:
       channel_manager()->DestroyVoiceChannel(
@@ -4749,6 +4778,12 @@ void SdpOfferAnswerHandler::DestroyChannelInterface(
       RTC_NOTREACHED() << "Unknown media type: " << channel->media_type();
       break;
   }
+
+  // TODO(tommi): Figure out why we can get 2 blocking calls when running
+  // PeerConnectionCryptoTest.CreateAnswerWithDifferentSslRoles.
+  // and 3 when running
+  // PeerConnectionCryptoTest.CreateAnswerWithDifferentSslRoles
+  // RTC_DCHECK_BLOCK_COUNT_NO_MORE_THAN(1);
 }
 
 void SdpOfferAnswerHandler::DestroyAllChannels() {
@@ -4756,18 +4791,25 @@ void SdpOfferAnswerHandler::DestroyAllChannels() {
   if (!transceivers()) {
     return;
   }
+
+  RTC_LOG_THREAD_BLOCK_COUNT();
+
   // Destroy video channels first since they may have a pointer to a voice
   // channel.
-  for (const auto& transceiver : transceivers()->List()) {
+  auto list = transceivers()->List();
+  RTC_DCHECK_BLOCK_COUNT_NO_MORE_THAN(0);
+
+  for (const auto& transceiver : list) {
     if (transceiver->media_type() == cricket::MEDIA_TYPE_VIDEO) {
       DestroyTransceiverChannel(transceiver);
     }
   }
-  for (const auto& transceiver : transceivers()->List()) {
+  for (const auto& transceiver : list) {
     if (transceiver->media_type() == cricket::MEDIA_TYPE_AUDIO) {
       DestroyTransceiverChannel(transceiver);
     }
   }
+
   DestroyDataChannelTransport();
 }
 
