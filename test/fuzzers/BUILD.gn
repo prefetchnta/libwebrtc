@@ -443,15 +443,6 @@ webrtc_fuzzer_test("stun_validator_fuzzer") {
   dict = "corpora/stun.tokens"
 }
 
-webrtc_fuzzer_test("mdns_parser_fuzzer") {
-  sources = [ "mdns_parser_fuzzer.cc" ]
-  deps = [
-    "../../p2p:rtc_p2p",
-    "../../rtc_base:rtc_base_approved",
-  ]
-  seed_corpus = "corpora/mdns-corpus"
-}
-
 webrtc_fuzzer_test("pseudotcp_parser_fuzzer") {
   sources = [ "pseudotcp_parser_fuzzer.cc" ]
   deps = [
@@ -609,15 +600,6 @@ webrtc_fuzzer_test("sctp_utils_fuzzer") {
     "../../api:libjingle_peerconnection_api",
     "../../pc:libjingle_peerconnection",
     "../../pc:rtc_pc_base",
-    "../../rtc_base:rtc_base_approved",
-  ]
-}
-
-webrtc_fuzzer_test("dcsctp_packet_fuzzer") {
-  sources = [ "dcsctp_packet_fuzzer.cc" ]
-  deps = [
-    "../../net/dcsctp/packet:chunk",
-    "../../net/dcsctp/packet:sctp_packet",
     "../../rtc_base:rtc_base_approved",
   ]
 }

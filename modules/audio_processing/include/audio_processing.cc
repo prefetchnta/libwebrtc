@@ -46,13 +46,13 @@ std::string GainController1ModeToString(const Agc1Config::Mode& mode) {
   RTC_CHECK_NOTREACHED();
 }
 
-std::string GainController2LevelEstimatorToString(
-    const Agc2Config::LevelEstimator& level) {
-  switch (level) {
-    case Agc2Config::LevelEstimator::kRms:
-      return "Rms";
-    case Agc2Config::LevelEstimator::kPeak:
-      return "Peak";
+std::string GainController2NoiseEstimatorToString(
+    const Agc2Config::NoiseEstimator& type) {
+  switch (type) {
+    case Agc2Config::NoiseEstimator::kStationaryNoise:
+      return "StationaryNoise";
+    case Agc2Config::NoiseEstimator::kNoiseFloor:
+      return "NoiseFloor";
   }
   RTC_CHECK_NOTREACHED();
 }
@@ -160,21 +160,13 @@ std::string AudioProcessing::Config::ToString() const {
       << ", fixed_digital: { gain_db: "
       << gain_controller2.fixed_digital.gain_db
       << " }, adaptive_digital: { enabled: "
-      << gain_controller2.adaptive_digital.enabled
-      << ", level_estimator: { vad_probability_attack: "
-      << gain_controller2.adaptive_digital.vad_probability_attack << ", type: "
-      << GainController2LevelEstimatorToString(
-             gain_controller2.adaptive_digital.level_estimator)
+      << gain_controller2.adaptive_digital.enabled << ", noise_estimator: "
+      << GainController2NoiseEstimatorToString(
+             gain_controller2.adaptive_digital.noise_estimator)
+      << ", vad_reset_period_ms: "
+      << gain_controller2.adaptive_digital.vad_reset_period_ms
       << ", adjacent_speech_frames_threshold: "
-      << gain_controller2.adaptive_digital
-             .level_estimator_adjacent_speech_frames_threshold
-      << ", initial_saturation_margin_db: "
-      << gain_controller2.adaptive_digital.initial_saturation_margin_db
-      << ", extra_saturation_margin_db: "
-      << gain_controller2.adaptive_digital.extra_saturation_margin_db
-      << " }, gain_applier: { adjacent_speech_frames_threshold: "
-      << gain_controller2.adaptive_digital
-             .gain_applier_adjacent_speech_frames_threshold
+      << gain_controller2.adaptive_digital.adjacent_speech_frames_threshold
       << ", max_gain_change_db_per_second: "
       << gain_controller2.adaptive_digital.max_gain_change_db_per_second
       << ", max_output_noise_level_dbfs: "
@@ -182,7 +174,7 @@ std::string AudioProcessing::Config::ToString() const {
       << ", sse2_allowed: " << gain_controller2.adaptive_digital.sse2_allowed
       << ", avx2_allowed: " << gain_controller2.adaptive_digital.avx2_allowed
       << ", neon_allowed: " << gain_controller2.adaptive_digital.neon_allowed
-      << " }}}, residual_echo_detector: { enabled: "
+      << "}}, residual_echo_detector: { enabled: "
       << residual_echo_detector.enabled
       << " }, level_estimation: { enabled: " << level_estimation.enabled
       << " }}";

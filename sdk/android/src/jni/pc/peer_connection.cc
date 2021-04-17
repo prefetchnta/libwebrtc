@@ -44,6 +44,7 @@
 #include "sdk/android/generated_peerconnection_jni/PeerConnection_jni.h"
 #include "sdk/android/native_api/jni/java_types.h"
 #include "sdk/android/src/jni/jni_helpers.h"
+#include "sdk/android/src/jni/pc/add_ice_candidate_observer.h"
 #include "sdk/android/src/jni/pc/crypto_options.h"
 #include "sdk/android/src/jni/pc/data_channel.h"
 #include "sdk/android/src/jni/pc/ice_candidate.h"
@@ -237,6 +238,12 @@ void JavaToNativeRTCConfiguration(
                                                               j_rtc_config);
   rtc_config->stun_candidate_keepalive_interval =
       JavaToNativeOptionalInt(jni, j_stun_candidate_keepalive_interval);
+  ScopedJavaLocalRef<jobject> j_stable_writable_connection_ping_interval_ms =
+      Java_RTCConfiguration_getStableWritableConnectionPingIntervalMs(
+          jni, j_rtc_config);
+  rtc_config->stable_writable_connection_ping_interval_ms =
+      JavaToNativeOptionalInt(jni,
+                              j_stable_writable_connection_ping_interval_ms);
   rtc_config->disable_ipv6_on_wifi =
       Java_RTCConfiguration_getDisableIPv6OnWifi(jni, j_rtc_config);
   rtc_config->max_ipv6_networks =
@@ -250,8 +257,6 @@ void JavaToNativeRTCConfiguration(
       Java_RTCConfiguration_getEnableDscp(jni, j_rtc_config);
   rtc_config->media_config.video.enable_cpu_adaptation =
       Java_RTCConfiguration_getEnableCpuOveruseDetection(jni, j_rtc_config);
-  rtc_config->enable_rtp_data_channel =
-      Java_RTCConfiguration_getEnableRtpDataChannel(jni, j_rtc_config);
   rtc_config->media_config.video.suspend_below_min_bitrate =
       Java_RTCConfiguration_getSuspendBelowMinBitrate(jni, j_rtc_config);
   rtc_config->screencast_min_bitrate = JavaToNativeOptionalInt(
@@ -469,9 +474,7 @@ static jlong JNI_PeerConnection_CreatePeerConnectionObserver(
   return jlongFromPointer(new PeerConnectionObserverJni(jni, j_observer));
 }
 
-static void JNI_PeerConnection_FreeOwnedPeerConnection(
-    JNIEnv*,
-    jlong j_p) {
+static void JNI_PeerConnection_FreeOwnedPeerConnection(JNIEnv*, jlong j_p) {
   delete reinterpret_cast<OwnedPeerConnection*>(j_p);
 }
 
@@ -649,6 +652,25 @@ static jboolean JNI_PeerConnection_AddIceCandidate(
   std::unique_ptr<IceCandidateInterface> candidate(
       CreateIceCandidate(sdp_mid, j_sdp_mline_index, sdp, nullptr));
   return ExtractNativePC(jni, j_pc)->AddIceCandidate(candidate.get());
+}
+
+static void JNI_PeerConnection_AddIceCandidateWithObserver(
+    JNIEnv* jni,
+    const JavaParamRef<jobject>& j_pc,
+    const JavaParamRef<jstring>& j_sdp_mid,
+    jint j_sdp_mline_index,
+    const JavaParamRef<jstring>& j_candidate_sdp,
+    const JavaParamRef<jobject>& j_observer) {
+  std::string sdp_mid = JavaToNativeString(jni, j_sdp_mid);
+  std::string sdp = JavaToNativeString(jni, j_candidate_sdp);
+  std::unique_ptr<IceCandidateInterface> candidate(
+      CreateIceCandidate(sdp_mid, j_sdp_mline_index, sdp, nullptr));
+
+  rtc::scoped_refptr<AddIceCandidateObserverJni> observer(
+      new AddIceCandidateObserverJni(jni, j_observer));
+  ExtractNativePC(jni, j_pc)->AddIceCandidate(
+      std::move(candidate),
+      [observer](RTCError error) { observer->OnComplete(error); });
 }
 
 static jboolean JNI_PeerConnection_RemoveIceCandidates(

@@ -180,7 +180,6 @@ IceCandidatePairType GetIceCandidatePairCounter(
   return kIceCandidatePairMax;
 }
 
-
 absl::optional<int> RTCConfigurationToIceConfigOptionalInt(
     int rtc_configuration_parameter) {
   if (rtc_configuration_parameter ==
@@ -248,6 +247,8 @@ cricket::IceConfig ParseIceConfig(
   ice_config.ice_inactive_timeout = config.ice_inactive_timeout;
   ice_config.stun_keepalive_interval = config.stun_candidate_keepalive_interval;
   ice_config.network_preference = config.network_preference;
+  ice_config.stable_writable_connection_ping_interval =
+      config.stable_writable_connection_ping_interval_ms;
   return ice_config;
 }
 
@@ -334,6 +335,7 @@ bool PeerConnectionInterface::RTCConfiguration::operator==(
     bool enable_implicit_rollback;
     absl::optional<bool> allow_codec_switching;
     absl::optional<int> report_usage_pattern_delay_ms;
+    absl::optional<int> stable_writable_connection_ping_interval_ms;
   };
   static_assert(sizeof(stuff_being_tested_for_equality) == sizeof(*this),
                 "Did you add something to RTCConfiguration and forget to "
@@ -362,7 +364,6 @@ bool PeerConnectionInterface::RTCConfiguration::operator==(
          disable_ipv6_on_wifi == o.disable_ipv6_on_wifi &&
          max_ipv6_networks == o.max_ipv6_networks &&
          disable_link_local_networks == o.disable_link_local_networks &&
-         enable_rtp_data_channel == o.enable_rtp_data_channel &&
          screencast_min_bitrate == o.screencast_min_bitrate &&
          combined_audio_video_bwe == o.combined_audio_video_bwe &&
          enable_dtls_srtp == o.enable_dtls_srtp &&
@@ -394,7 +395,9 @@ bool PeerConnectionInterface::RTCConfiguration::operator==(
          turn_logging_id == o.turn_logging_id &&
          enable_implicit_rollback == o.enable_implicit_rollback &&
          allow_codec_switching == o.allow_codec_switching &&
-         report_usage_pattern_delay_ms == o.report_usage_pattern_delay_ms;
+         report_usage_pattern_delay_ms == o.report_usage_pattern_delay_ms &&
+         stable_writable_connection_ping_interval_ms ==
+             o.stable_writable_connection_ping_interval_ms;
 }
 
 bool PeerConnectionInterface::RTCConfiguration::operator!=(
@@ -594,16 +597,9 @@ RTCError PeerConnection::Initialize(
     NoteUsageEvent(UsageEvent::TURN_SERVER_ADDED);
   }
 
-  if (configuration.enable_rtp_data_channel) {
-    // Enable creation of RTP data channels if the kEnableRtpDataChannels is
-    // set. It takes precendence over the disable_sctp_data_channels
-    // PeerConnectionFactoryInterface::Options.
-    data_channel_controller_.set_data_channel_type(cricket::DCT_RTP);
-  } else {
-    // DTLS has to be enabled to use SCTP.
-    if (!options_.disable_sctp_data_channels && dtls_enabled_) {
-      data_channel_controller_.set_data_channel_type(cricket::DCT_SCTP);
-    }
+  // DTLS has to be enabled to use SCTP.
+  if (!options_.disable_sctp_data_channels && dtls_enabled_) {
+    data_channel_controller_.set_data_channel_type(cricket::DCT_SCTP);
   }
 
   // Network thread initialization.
@@ -684,8 +680,7 @@ void PeerConnection::InitializeTransportController_n(
   config.active_reset_srtp_params = configuration.active_reset_srtp_params;
 
   // DTLS has to be enabled to use SCTP.
-  if (!configuration.enable_rtp_data_channel &&
-      !options_.disable_sctp_data_channels && dtls_enabled_) {
+  if (!options_.disable_sctp_data_channels && dtls_enabled_) {
     config.sctp_factory = context_->sctp_transport_factory();
   }
 
@@ -1307,7 +1302,7 @@ rtc::scoped_refptr<DataChannelInterface> PeerConnection::CreateDataChannel(
 
   // Trigger the onRenegotiationNeeded event for every new RTP DataChannel, or
   // the first SCTP DataChannel.
-  if (data_channel_type() == cricket::DCT_RTP || first_datachannel) {
+  if (first_datachannel) {
     sdp_handler_->UpdateNegotiationNeeded();
   }
   NoteUsageEvent(UsageEvent::DATA_ADDED);
@@ -1432,6 +1427,8 @@ RTCError PeerConnection::SetConfiguration(
       configuration.active_reset_srtp_params;
   modified_config.turn_logging_id = configuration.turn_logging_id;
   modified_config.allow_codec_switching = configuration.allow_codec_switching;
+  modified_config.stable_writable_connection_ping_interval_ms =
+      configuration.stable_writable_connection_ping_interval_ms;
   if (configuration != modified_config) {
     LOG_AND_RETURN_ERROR(RTCErrorType::INVALID_MODIFICATION,
                          "Modifying the configuration in an unsupported way.");
@@ -1771,7 +1768,6 @@ void PeerConnection::Close() {
     // TODO(tommi): ^^ That's not exactly optimal since this is yet another
     // blocking hop to the network thread during Close(). Further still, the
     // voice/video/data channels will be cleared on the worker thread.
-    RTC_DCHECK(!data_channel_controller_.rtp_data_channel());
     transport_controller_.reset();
     port_allocator_->DiscardCandidatePool();
     if (network_thread_safety_) {
@@ -1948,11 +1944,6 @@ void PeerConnection::OnSelectedCandidatePairChanged(
 absl::optional<std::string> PeerConnection::GetDataMid() const {
   RTC_DCHECK_RUN_ON(signaling_thread());
   switch (data_channel_type()) {
-    case cricket::DCT_RTP:
-      if (!data_channel_controller_.rtp_data_channel()) {
-        return absl::nullopt;
-      }
-      return data_channel_controller_.rtp_data_channel()->content_name();
     case cricket::DCT_SCTP:
       return sctp_mid_s_;
     default:
@@ -2109,10 +2100,6 @@ cricket::ChannelInterface* PeerConnection::GetChannel(
       return channel;
     }
   }
-  if (rtp_data_channel() &&
-      rtp_data_channel()->content_name() == content_name) {
-    return rtp_data_channel();
-  }
   return nullptr;
 }
 
@@ -2213,11 +2200,6 @@ std::map<std::string, std::string> PeerConnection::GetTransportNamesByMid()
       transport_names_by_mid[channel->content_name()] =
           channel->transport_name();
     }
-  }
-  if (data_channel_controller_.rtp_data_channel()) {
-    transport_names_by_mid[data_channel_controller_.rtp_data_channel()
-                               ->content_name()] =
-        data_channel_controller_.rtp_data_channel()->transport_name();
   }
   if (sctp_mid_n_) {
     cricket::DtlsTransportInternal* dtls_transport =
@@ -2451,22 +2433,7 @@ bool PeerConnection::SetupDataChannelTransport_n(const std::string& mid) {
   return true;
 }
 
-void PeerConnection::SetupRtpDataChannelTransport_n(
-    cricket::RtpDataChannel* data_channel) {
-  data_channel_controller_.set_rtp_data_channel(data_channel);
-  if (!data_channel)
-    return;
-
-  // TODO(bugs.webrtc.org/9987): OnSentPacket_w needs to be changed to
-  // OnSentPacket_n (and be called on the network thread).
-  data_channel->SignalSentPacket().connect(this,
-                                           &PeerConnection::OnSentPacket_w);
-}
-
 void PeerConnection::TeardownDataChannelTransport_n() {
-  // Clear the RTP data channel if any.
-  data_channel_controller_.set_rtp_data_channel(nullptr);
-
   if (sctp_mid_n_) {
     // |sctp_mid_| may still be active through an SCTP transport.  If not, unset
     // it.
@@ -2708,11 +2675,6 @@ void PeerConnection::ReportTransportStats() {
       media_types_by_transport_name[transport_name].insert(
           transceiver->media_type());
     }
-  }
-
-  if (rtp_data_channel()) {
-    media_types_by_transport_name[rtp_data_channel()->transport_name()].insert(
-        cricket::MEDIA_TYPE_DATA);
   }
 
   if (sctp_mid_n_) {

@@ -193,28 +193,6 @@ class PeerConnectionDataChannelUnifiedPlanTest
       : PeerConnectionDataChannelBaseTest(SdpSemantics::kUnifiedPlan) {}
 };
 
-TEST_P(PeerConnectionDataChannelTest,
-       NoSctpTransportCreatedIfRtpDataChannelEnabled) {
-  RTCConfiguration config;
-  config.enable_rtp_data_channel = true;
-  auto caller = CreatePeerConnectionWithDataChannel(config);
-
-  ASSERT_TRUE(caller->SetLocalDescription(caller->CreateOffer()));
-  EXPECT_FALSE(caller->sctp_transport_factory()->last_fake_sctp_transport());
-}
-
-TEST_P(PeerConnectionDataChannelTest,
-       RtpDataChannelCreatedEvenIfSctpAvailable) {
-  RTCConfiguration config;
-  config.enable_rtp_data_channel = true;
-  PeerConnectionFactoryInterface::Options options;
-  options.disable_sctp_data_channels = false;
-  auto caller = CreatePeerConnectionWithDataChannel(config, options);
-
-  ASSERT_TRUE(caller->SetLocalDescription(caller->CreateOffer()));
-  EXPECT_FALSE(caller->sctp_transport_factory()->last_fake_sctp_transport());
-}
-
 TEST_P(PeerConnectionDataChannelTest, InternalSctpTransportDeletedOnTeardown) {
   auto caller = CreatePeerConnectionWithDataChannel();
 
@@ -352,8 +330,9 @@ TEST_P(PeerConnectionDataChannelTest, SctpPortPropagatedFromSdpToTransport) {
 
   auto answer = callee->CreateAnswer();
   ChangeSctpPortOnDescription(answer->description(), kNewRecvPort);
+  std::string sdp;
+  answer->ToString(&sdp);
   ASSERT_TRUE(callee->SetLocalDescription(std::move(answer)));
-
   auto* callee_transport =
       callee->sctp_transport_factory()->last_fake_sctp_transport();
   ASSERT_TRUE(callee_transport);

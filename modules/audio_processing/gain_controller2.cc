@@ -73,7 +73,7 @@ void GainController2::Process(AudioBuffer* audio) {
 
 void GainController2::NotifyAnalogLevel(int level) {
   if (analog_level_ != level && adaptive_agc_) {
-    adaptive_agc_->Reset();
+    adaptive_agc_->HandleInputGainChange();
   }
   analog_level_ = level;
 }
@@ -90,7 +90,8 @@ void GainController2::ApplyConfig(
   }
   gain_applier_.SetGainFactor(DbToRatio(config_.fixed_digital.gain_db));
   if (config_.adaptive_digital.enabled) {
-    adaptive_agc_ = std::make_unique<AdaptiveAgc>(&data_dumper_, config_);
+    adaptive_agc_ =
+        std::make_unique<AdaptiveAgc>(&data_dumper_, config_.adaptive_digital);
   } else {
     adaptive_agc_.reset();
   }

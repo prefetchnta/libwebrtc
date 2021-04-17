@@ -206,6 +206,17 @@ class MediaChannel : public sigslot::has_slots<> {
   // Resets any cached StreamParams for an unsignaled RecvStream, and removes
   // any existing unsignaled streams.
   virtual void ResetUnsignaledRecvStream() = 0;
+  // Informs the media channel when the transport's demuxer criteria is updated.
+  // * OnDemuxerCriteriaUpdatePending() happens on the same thread that the
+  //   channel's streams are added and removed (worker thread).
+  // * OnDemuxerCriteriaUpdateComplete() happens on the thread where the demuxer
+  //   lives (network thread).
+  // Because the demuxer is updated asynchronously, there is a window of time
+  // where packets are arriving to the channel for streams that have already
+  // been removed on the worker thread. It is important NOT to treat these as
+  // new unsignalled ssrcs.
+  virtual void OnDemuxerCriteriaUpdatePending() = 0;
+  virtual void OnDemuxerCriteriaUpdateComplete() = 0;
   // Returns the absoulte sendtime extension id value from media channel.
   virtual int GetRtpSendTimeExtnId() const;
   // Set the frame encryptor to use on all outgoing frames. This is optional.
@@ -944,11 +955,8 @@ enum DataMessageType {
 // signal fires, on up the chain.
 struct ReceiveDataParams {
   // The in-packet stream indentifier.
-  // RTP data channels use SSRCs, SCTP data channels use SIDs.
-  union {
-    uint32_t ssrc;
-    int sid = 0;
-  };
+  // SCTP data channels use SIDs.
+  int sid = 0;
   // The type of message (binary, text, or control).
   DataMessageType type = DMT_TEXT;
   // A per-stream value incremented per packet in the stream.
@@ -959,11 +967,7 @@ struct ReceiveDataParams {
 
 struct SendDataParams {
   // The in-packet stream indentifier.
-  // RTP data channels use SSRCs, SCTP data channels use SIDs.
-  union {
-    uint32_t ssrc;
-    int sid = 0;
-  };
+  int sid = 0;
   // The type of message (binary, text, or control).
   DataMessageType type = DMT_TEXT;
 
