@@ -97,6 +97,7 @@
 #include "rtc_base/thread.h"
 #include "rtc_base/thread_annotations.h"
 #include "rtc_base/unique_id_generator.h"
+#include "rtc_base/weak_ptr.h"
 
 namespace webrtc {
 
@@ -293,9 +294,9 @@ class PeerConnection : public PeerConnectionInternal,
   std::vector<DataChannelStats> GetDataChannelStats() const override;
 
   absl::optional<std::string> sctp_transport_name() const override;
+  absl::optional<std::string> sctp_mid() const override;
 
   cricket::CandidateStatsList GetPooledCandidateStats() const override;
-  std::map<std::string, std::string> GetTransportNamesByMid() const override;
   std::map<std::string, cricket::TransportStats> GetTransportStatsByNames(
       const std::set<std::string>& transport_names) override;
   Call::Stats GetCallStats() override;
@@ -342,10 +343,6 @@ class PeerConnection : public PeerConnectionInternal,
     RTC_DCHECK_RUN_ON(signaling_thread());
     return &configuration_;
   }
-  absl::optional<std::string> sctp_mid() {
-    RTC_DCHECK_RUN_ON(signaling_thread());
-    return sctp_mid_s_;
-  }
   PeerConnectionMessageHandler* message_handler() {
     RTC_DCHECK_RUN_ON(signaling_thread());
     return &message_handler_;
@@ -367,7 +364,6 @@ class PeerConnection : public PeerConnectionInternal,
   const PeerConnectionFactoryInterface::Options* options() const {
     return &options_;
   }
-  cricket::DataChannelType data_channel_type() const;
   void SetIceConnectionState(IceConnectionState new_state);
   void NoteUsageEvent(UsageEvent event);
 
@@ -430,12 +426,11 @@ class PeerConnection : public PeerConnectionInternal,
   // this session.
   bool SrtpRequired() const;
 
-  void OnSentPacket_w(const rtc::SentPacket& sent_packet);
-
   bool SetupDataChannelTransport_n(const std::string& mid)
       RTC_RUN_ON(network_thread());
   void TeardownDataChannelTransport_n() RTC_RUN_ON(network_thread());
-  cricket::ChannelInterface* GetChannel(const std::string& content_name);
+  cricket::ChannelInterface* GetChannel(const std::string& content_name)
+      RTC_RUN_ON(network_thread());
 
   // Functions made public for testing.
   void ReturnHistogramVeryQuicklyForTesting() {

@@ -292,6 +292,9 @@ class Call final : public webrtc::Call,
 
   const WebRtcKeyValueConfig& trials() const override;
 
+  TaskQueueBase* network_thread() const override;
+  TaskQueueBase* worker_thread() const override;
+
   // Implements PacketReceiver.
   DeliveryStatus DeliverPacket(MediaType media_type,
                                rtc::CopyOnWriteBuffer packet,
@@ -1164,6 +1167,14 @@ const WebRtcKeyValueConfig& Call::trials() const {
   return *config_.trials;
 }
 
+TaskQueueBase* Call::network_thread() const {
+  return network_thread_;
+}
+
+TaskQueueBase* Call::worker_thread() const {
+  return worker_thread_;
+}
+
 void Call::SignalChannelNetworkState(MediaType media, NetworkState state) {
   RTC_DCHECK_RUN_ON(network_thread_);
   RTC_DCHECK(media == MediaType::AUDIO || media == MediaType::VIDEO);
@@ -1239,6 +1250,12 @@ void Call::UpdateAggregateNetworkState() {
 }
 
 void Call::OnSentPacket(const rtc::SentPacket& sent_packet) {
+  // In production and with most tests, this method will be called on the
+  // network thread. However some test classes such as DirectTransport don't
+  // incorporate a network thread. This means that tests for RtpSenderEgress
+  // and ModuleRtpRtcpImpl2 that use DirectTransport, will call this method
+  // on a ProcessThread. This is alright as is since we forward the call to
+  // implementations that either just do a PostTask or use locking.
   video_send_delay_stats_->OnSentPacket(sent_packet.packet_id,
                                         clock_->TimeInMilliseconds());
   transport_send_ptr_->OnSentPacket(sent_packet);

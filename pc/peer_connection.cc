@@ -41,13 +41,13 @@
 #include "p2p/base/p2p_constants.h"
 #include "p2p/base/p2p_transport_channel.h"
 #include "p2p/base/transport_info.h"
+#include "pc/channel.h"
 #include "pc/ice_server_parsing.h"
 #include "pc/rtp_receiver.h"
 #include "pc/rtp_sender.h"
 #include "pc/sctp_transport.h"
 #include "pc/simulcast_description.h"
 #include "pc/webrtc_session_description_factory.h"
-#include "rtc_base/callback_list.h"
 #include "rtc_base/helpers.h"
 #include "rtc_base/ip_address.h"
 #include "rtc_base/location.h"
@@ -597,11 +597,6 @@ RTCError PeerConnection::Initialize(
     NoteUsageEvent(UsageEvent::TURN_SERVER_ADDED);
   }
 
-  // DTLS has to be enabled to use SCTP.
-  if (!options_.disable_sctp_data_channels && dtls_enabled_) {
-    data_channel_controller_.set_data_channel_type(cricket::DCT_SCTP);
-  }
-
   // Network thread initialization.
   network_thread()->Invoke<void>(RTC_FROM_HERE, [this, &stun_servers,
                                                  &turn_servers, &configuration,
@@ -680,7 +675,7 @@ void PeerConnection::InitializeTransportController_n(
   config.active_reset_srtp_params = configuration.active_reset_srtp_params;
 
   // DTLS has to be enabled to use SCTP.
-  if (!options_.disable_sctp_data_channels && dtls_enabled_) {
+  if (dtls_enabled_) {
     config.sctp_factory = context_->sctp_transport_factory();
   }
 
@@ -1300,7 +1295,7 @@ rtc::scoped_refptr<DataChannelInterface> PeerConnection::CreateDataChannel(
     return nullptr;
   }
 
-  // Trigger the onRenegotiationNeeded event for every new RTP DataChannel, or
+  // Trigger the onRenegotiationNeeded event for
   // the first SCTP DataChannel.
   if (first_datachannel) {
     sdp_handler_->UpdateNegotiationNeeded();
@@ -1943,12 +1938,7 @@ void PeerConnection::OnSelectedCandidatePairChanged(
 
 absl::optional<std::string> PeerConnection::GetDataMid() const {
   RTC_DCHECK_RUN_ON(signaling_thread());
-  switch (data_channel_type()) {
-    case cricket::DCT_SCTP:
-      return sctp_mid_s_;
-    default:
-      return absl::nullopt;
-  }
+  return sctp_mid_s_;
 }
 
 void PeerConnection::SetSctpDataMid(const std::string& mid) {
@@ -2094,7 +2084,7 @@ void PeerConnection::StopRtcEventLog_w() {
 
 cricket::ChannelInterface* PeerConnection::GetChannel(
     const std::string& content_name) {
-  for (const auto& transceiver : rtp_manager()->transceivers()->List()) {
+  for (const auto& transceiver : rtp_manager()->transceivers()->UnsafeList()) {
     cricket::ChannelInterface* channel = transceiver->internal()->channel();
     if (channel && channel->content_name() == content_name) {
       return channel;
@@ -2176,6 +2166,11 @@ absl::optional<std::string> PeerConnection::sctp_transport_name() const {
   return absl::optional<std::string>();
 }
 
+absl::optional<std::string> PeerConnection::sctp_mid() const {
+  RTC_DCHECK_RUN_ON(signaling_thread());
+  return sctp_mid_s_;
+}
+
 cricket::CandidateStatsList PeerConnection::GetPooledCandidateStats() const {
   RTC_DCHECK_RUN_ON(network_thread());
   if (!network_thread_safety_->alive())
@@ -2183,30 +2178,6 @@ cricket::CandidateStatsList PeerConnection::GetPooledCandidateStats() const {
   cricket::CandidateStatsList candidate_states_list;
   port_allocator_->GetCandidateStatsFromPooledSessions(&candidate_states_list);
   return candidate_states_list;
-}
-
-std::map<std::string, std::string> PeerConnection::GetTransportNamesByMid()
-    const {
-  RTC_DCHECK_RUN_ON(network_thread());
-  rtc::Thread::ScopedDisallowBlockingCalls no_blocking_calls;
-
-  if (!network_thread_safety_->alive())
-    return {};
-
-  std::map<std::string, std::string> transport_names_by_mid;
-  for (const auto& transceiver : rtp_manager()->transceivers()->List()) {
-    cricket::ChannelInterface* channel = transceiver->internal()->channel();
-    if (channel) {
-      transport_names_by_mid[channel->content_name()] =
-          channel->transport_name();
-    }
-  }
-  if (sctp_mid_n_) {
-    cricket::DtlsTransportInternal* dtls_transport =
-        transport_controller_->GetDtlsTransport(*sctp_mid_n_);
-    transport_names_by_mid[*sctp_mid_n_] = dtls_transport->transport_name();
-  }
-  return transport_names_by_mid;
 }
 
 std::map<std::string, cricket::TransportStats>
@@ -2247,10 +2218,6 @@ std::unique_ptr<rtc::SSLCertChain> PeerConnection::GetRemoteSSLCertChain(
     const std::string& transport_name) {
   RTC_DCHECK_RUN_ON(network_thread());
   return transport_controller_->GetRemoteSSLCertChain(transport_name);
-}
-
-cricket::DataChannelType PeerConnection::data_channel_type() const {
-  return data_channel_controller_.data_channel_type();
 }
 
 bool PeerConnection::IceRestartPending(const std::string& content_name) const {
@@ -2668,7 +2635,7 @@ void PeerConnection::ReportTransportStats() {
   rtc::Thread::ScopedDisallowBlockingCalls no_blocking_calls;
   std::map<std::string, std::set<cricket::MediaType>>
       media_types_by_transport_name;
-  for (const auto& transceiver : rtp_manager()->transceivers()->List()) {
+  for (const auto& transceiver : rtp_manager()->transceivers()->UnsafeList()) {
     if (transceiver->internal()->channel()) {
       const std::string& transport_name =
           transceiver->internal()->channel()->transport_name();
@@ -2812,12 +2779,6 @@ void PeerConnection::ReportNegotiatedCiphers(
       }
     }
   }
-}
-
-void PeerConnection::OnSentPacket_w(const rtc::SentPacket& sent_packet) {
-  RTC_DCHECK_RUN_ON(worker_thread());
-  RTC_DCHECK(call_);
-  call_->OnSentPacket(sent_packet);
 }
 
 bool PeerConnection::OnTransportChanged(

@@ -13,7 +13,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-
 #include <functional>
 #include <map>
 #include <memory>
@@ -175,15 +174,6 @@ class SdpOfferAnswerHandler : public SdpStateProvider,
   bool HasNewIceCredentials();
   void UpdateNegotiationNeeded();
 
-  // Returns the media section in the given session description that is
-  // associated with the RtpTransceiver. Returns null if none found or this
-  // RtpTransceiver is not associated. Logic varies depending on the
-  // SdpSemantics specified in the configuration.
-  const cricket::ContentInfo* FindMediaSectionForTransceiver(
-      rtc::scoped_refptr<RtpTransceiverProxyWithInternal<RtpTransceiver>>
-          transceiver,
-      const SessionDescriptionInterface* sdesc) const;
-
   // Destroys all BaseChannels and destroys the SCTP data channel, if present.
   void DestroyAllChannels();
 
@@ -319,6 +309,14 @@ class SdpOfferAnswerHandler : public SdpStateProvider,
                        const cricket::ContentInfo* old_remote_content)
       RTC_RUN_ON(signaling_thread());
 
+  // Returns the media section in the given session description that is
+  // associated with the RtpTransceiver. Returns null if none found or this
+  // RtpTransceiver is not associated. Logic varies depending on the
+  // SdpSemantics specified in the configuration.
+  const cricket::ContentInfo* FindMediaSectionForTransceiver(
+      const RtpTransceiver* transceiver,
+      const SessionDescriptionInterface* sdesc) const;
+
   // If the BUNDLE policy is max-bundle, then we know for sure that all
   // transports will be bundled from the start. This method returns the BUNDLE
   // group if that's the case, or null if BUNDLE will be negotiated later. An
@@ -420,7 +418,7 @@ class SdpOfferAnswerHandler : public SdpStateProvider,
   // |removed_streams| is the list of streams which no longer have a receiving
   //     track so should be removed.
   void ProcessRemovalOfRemoteTrack(
-      rtc::scoped_refptr<RtpTransceiverProxyWithInternal<RtpTransceiver>>
+      const rtc::scoped_refptr<RtpTransceiverProxyWithInternal<RtpTransceiver>>
           transceiver,
       std::vector<rtc::scoped_refptr<RtpTransceiverInterface>>* remove_list,
       std::vector<rtc::scoped_refptr<MediaStreamInterface>>* removed_streams);
@@ -454,8 +452,7 @@ class SdpOfferAnswerHandler : public SdpStateProvider,
       StreamCollection* new_streams);
 
   // Enables media channels to allow sending of media.
-  // This enables media to flow on all configured audio/video channels and the
-  // RtpDataChannel.
+  // This enables media to flow on all configured audio/video channels.
   void EnableSending();
   // Push the media parts of the local or remote session description
   // down to all of the channels.

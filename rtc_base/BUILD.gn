@@ -198,7 +198,10 @@ rtc_source_set("refcount") {
     "ref_counted_object.h",
     "ref_counter.h",
   ]
-  deps = [ ":macromagic" ]
+  deps = [
+    ":macromagic",
+    "../api:scoped_refptr",
+  ]
 }
 
 rtc_library("criticalsection") {
@@ -238,7 +241,10 @@ rtc_library("platform_thread") {
     ":timeutils",
     "../api:sequence_checker",
   ]
-  absl_deps = [ "//third_party/abseil-cpp/absl/strings" ]
+  absl_deps = [
+    "//third_party/abseil-cpp/absl/memory",
+    "//third_party/abseil-cpp/absl/strings",
+  ]
 }
 
 rtc_library("rtc_event") {
@@ -792,6 +798,7 @@ rtc_library("threading") {
     ":socket_server",
     ":timeutils",
     "../api:function_view",
+    "../api:refcountedbase",
     "../api:scoped_refptr",
     "../api:sequence_checker",
     "../api/task_queue",
@@ -916,6 +923,7 @@ rtc_library("rtc_base") {
     ":threading",
     "../api:array_view",
     "../api:function_view",
+    "../api:refcountedbase",
     "../api:scoped_refptr",
     "../api:sequence_checker",
     "../api/numerics",

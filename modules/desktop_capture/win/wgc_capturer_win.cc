@@ -77,6 +77,13 @@ bool WgcCapturerWin::SelectSource(DesktopCapturer::SourceId id) {
   return capture_source_->IsCapturable();
 }
 
+bool WgcCapturerWin::FocusOnSelectedSource() {
+  if (!capture_source_)
+    return false;
+
+  return capture_source_->FocusOnSource();
+}
+
 void WgcCapturerWin::Start(Callback* callback) {
   RTC_DCHECK(!callback_);
   RTC_DCHECK(callback);
@@ -191,6 +198,7 @@ void WgcCapturerWin::CaptureFrame() {
                             capture_time_ms);
   frame->set_capture_time_ms(capture_time_ms);
   frame->set_capturer_id(DesktopCapturerId::kWgcCapturerWin);
+  frame->set_may_contain_cursor(true);
   RecordWgcCapturerResult(WgcCapturerResult::kSuccess);
   callback_->OnCaptureResult(DesktopCapturer::Result::SUCCESS,
                              std::move(frame));

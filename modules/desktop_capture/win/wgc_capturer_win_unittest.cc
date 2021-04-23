@@ -335,10 +335,17 @@ INSTANTIATE_TEST_SUITE_P(SourceAgnostic,
                                            CaptureType::kScreenCapture));
 
 // Monitor specific tests.
+TEST_F(WgcCapturerWinTest, FocusOnMonitor) {
+  SetUpForScreenCapture();
+  EXPECT_TRUE(capturer_->SelectSource(0));
+
+  // You can't set focus on a monitor.
+  EXPECT_FALSE(capturer_->FocusOnSelectedSource());
+}
+
 TEST_F(WgcCapturerWinTest, CaptureAllMonitors) {
   SetUpForScreenCapture();
-  // 0 (or a NULL HMONITOR) leads to WGC capturing all displays.
-  EXPECT_TRUE(capturer_->SelectSource(0));
+  EXPECT_TRUE(capturer_->SelectSource(kFullDesktopScreenId));
 
   capturer_->Start(this);
   DoCapture();
@@ -347,6 +354,22 @@ TEST_F(WgcCapturerWinTest, CaptureAllMonitors) {
 }
 
 // Window specific tests.
+TEST_F(WgcCapturerWinTest, FocusOnWindow) {
+  capturer_ = WgcCapturerWin::CreateRawWindowCapturer(
+      DesktopCaptureOptions::CreateDefault());
+  window_info_ = CreateTestWindow(kWindowTitle);
+  source_id_ = GetScreenIdFromSourceList();
+
+  EXPECT_TRUE(capturer_->SelectSource(source_id_));
+  EXPECT_TRUE(capturer_->FocusOnSelectedSource());
+
+  HWND hwnd = reinterpret_cast<HWND>(source_id_);
+  EXPECT_EQ(hwnd, ::GetActiveWindow());
+  EXPECT_EQ(hwnd, ::GetForegroundWindow());
+  EXPECT_EQ(hwnd, ::GetFocus());
+  DestroyTestWindow(window_info_);
+}
+
 TEST_F(WgcCapturerWinTest, SelectMinimizedWindow) {
   SetUpForWindowCapture();
   MinimizeTestWindow(reinterpret_cast<HWND>(source_id_));
@@ -362,6 +385,25 @@ TEST_F(WgcCapturerWinTest, SelectClosedWindow) {
 
   CloseTestWindow();
   EXPECT_FALSE(capturer_->SelectSource(source_id_));
+}
+
+TEST_F(WgcCapturerWinTest, UnsupportedWindowStyle) {
+  // Create a window with the WS_EX_TOOLWINDOW style, which WGC does not
+  // support.
+  window_info_ = CreateTestWindow(kWindowTitle, kMediumWindowWidth,
+                                  kMediumWindowHeight, WS_EX_TOOLWINDOW);
+  capturer_ = WgcCapturerWin::CreateRawWindowCapturer(
+      DesktopCaptureOptions::CreateDefault());
+  DesktopCapturer::SourceList sources;
+  EXPECT_TRUE(capturer_->GetSourceList(&sources));
+  auto it = std::find_if(
+      sources.begin(), sources.end(), [&](const DesktopCapturer::Source& src) {
+        return src.id == reinterpret_cast<intptr_t>(window_info_.hwnd);
+      });
+
+  // We should not find the window, since we filter for unsupported styles.
+  EXPECT_EQ(it, sources.end());
+  DestroyTestWindow(window_info_);
 }
 
 TEST_F(WgcCapturerWinTest, IncreaseWindowSizeMidCapture) {

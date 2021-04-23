@@ -333,10 +333,10 @@ RtpVideoStreamReceiver::RtpVideoStreamReceiver(
   }
 
   if (frame_transformer) {
-    frame_transformer_delegate_ = new rtc::RefCountedObject<
-        RtpVideoStreamReceiverFrameTransformerDelegate>(
-        this, std::move(frame_transformer), rtc::Thread::Current(),
-        config_.rtp.remote_ssrc);
+    frame_transformer_delegate_ =
+        rtc::make_ref_counted<RtpVideoStreamReceiverFrameTransformerDelegate>(
+            this, std::move(frame_transformer), rtc::Thread::Current(),
+            config_.rtp.remote_ssrc);
     frame_transformer_delegate_->Init();
   }
 }
@@ -801,6 +801,12 @@ void RtpVideoStreamReceiver::OnInsertedPacket(
   }
   RTC_DCHECK(frame_boundary);
   if (result.buffer_cleared) {
+    {
+      MutexLock lock(&sync_info_lock_);
+      last_received_rtp_system_time_.reset();
+      last_received_keyframe_rtp_system_time_.reset();
+      last_received_keyframe_rtp_timestamp_.reset();
+    }
     RequestKeyFrame();
   }
 }
@@ -913,7 +919,7 @@ void RtpVideoStreamReceiver::SetDepacketizerToDecoderFrameTransformer(
     rtc::scoped_refptr<FrameTransformerInterface> frame_transformer) {
   RTC_DCHECK_RUN_ON(&network_tc_);
   frame_transformer_delegate_ =
-      new rtc::RefCountedObject<RtpVideoStreamReceiverFrameTransformerDelegate>(
+      rtc::make_ref_counted<RtpVideoStreamReceiverFrameTransformerDelegate>(
           this, std::move(frame_transformer), rtc::Thread::Current(),
           config_.rtp.remote_ssrc);
   frame_transformer_delegate_->Init();
@@ -1189,7 +1195,9 @@ void RtpVideoStreamReceiver::UpdatePacketReceiveTimestamps(
   Timestamp now = clock_->CurrentTime();
   {
     MutexLock lock(&sync_info_lock_);
-    if (is_keyframe) {
+    if (is_keyframe ||
+        last_received_keyframe_rtp_timestamp_ == packet.Timestamp()) {
+      last_received_keyframe_rtp_timestamp_ = packet.Timestamp();
       last_received_keyframe_rtp_system_time_ = now;
     }
     last_received_rtp_system_time_ = now;
