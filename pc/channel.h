@@ -59,7 +59,6 @@
 #include "rtc_base/network/sent_packet.h"
 #include "rtc_base/network_route.h"
 #include "rtc_base/socket.h"
-#include "rtc_base/synchronization/mutex.h"
 #include "rtc_base/task_utils/pending_task_safety_flag.h"
 #include "rtc_base/third_party/sigslot/sigslot.h"
 #include "rtc_base/thread.h"
@@ -94,8 +93,12 @@ struct CryptoParams;
 // NetworkInterface.
 
 class BaseChannel : public ChannelInterface,
-                    public rtc::MessageHandlerAutoCleanup,
+                    // TODO(tommi): Remove MessageHandler inheritance.
+                    public rtc::MessageHandler,
+                    // TODO(tommi): Remove has_slots inheritance.
                     public sigslot::has_slots<>,
+                    // TODO(tommi): Consider implementing these interfaces
+                    // via composition.
                     public MediaChannel::NetworkInterface,
                     public webrtc::RtpPacketSinkInterface {
  public:
@@ -131,7 +134,6 @@ class BaseChannel : public ChannelInterface,
     // TODO(tommi): Delete this variable.
     return transport_name_;
   }
-  bool enabled() const override { return enabled_; }
 
   // This function returns true if using SRTP (DTLS-based keying or SDES).
   bool srtp_active() const {
@@ -167,7 +169,7 @@ class BaseChannel : public ChannelInterface,
   // actually belong to a new channel. See: crbug.com/webrtc/11477
   bool SetPayloadTypeDemuxingEnabled(bool enabled) override;
 
-  bool Enable(bool enable) override;
+  void Enable(bool enable) override;
 
   const std::vector<StreamParams>& local_streams() const override {
     return local_streams_;
@@ -177,7 +179,7 @@ class BaseChannel : public ChannelInterface,
   }
 
   // Used for latency measurements.
-  sigslot::signal1<ChannelInterface*>& SignalFirstPacketReceived() override;
+  void SetFirstPacketReceivedCallback(std::function<void()> callback) override;
 
   // From RtpTransport - public for testing only
   void OnTransportReadyToSend(bool ready);
@@ -307,9 +309,6 @@ class BaseChannel : public ChannelInterface,
   // Return description of media channel to facilitate logging
   std::string ToString() const;
 
-  void SetNegotiatedHeaderExtensions_w(const RtpHeaderExtensions& extensions)
-      RTC_RUN_ON(worker_thread());
-
   // ChannelInterface overrides
   RtpHeaderExtensions GetNegotiatedRtpHeaderExtensions() const override;
 
@@ -317,17 +316,18 @@ class BaseChannel : public ChannelInterface,
   bool ConnectToRtpTransport() RTC_RUN_ON(network_thread());
   void DisconnectFromRtpTransport() RTC_RUN_ON(network_thread());
   void SignalSentPacket_n(const rtc::SentPacket& sent_packet);
+  void SetContent_s(const MediaContentDescription* content,
+                    webrtc::SdpType type) RTC_RUN_ON(signaling_thread());
 
   rtc::Thread* const worker_thread_;
   rtc::Thread* const network_thread_;
   rtc::Thread* const signaling_thread_;
   rtc::scoped_refptr<webrtc::PendingTaskSafetyFlag> alive_;
-  sigslot::signal1<ChannelInterface*> SignalFirstPacketReceived_
-      RTC_GUARDED_BY(signaling_thread_);
 
   const std::string content_name_;
 
-  bool has_received_packet_ = false;
+  std::function<void()> on_first_packet_received_
+      RTC_GUARDED_BY(network_thread());
 
   // Won't be set when using raw packet transports. SDP-specific thing.
   // TODO(bugs.webrtc.org/12230): Written on network thread, read on
@@ -356,7 +356,8 @@ class BaseChannel : public ChannelInterface,
   // Currently the |enabled_| flag is accessed from the signaling thread as
   // well, but it can be changed only when signaling thread does a synchronous
   // call to the worker thread, so it should be safe.
-  bool enabled_ = false;
+  bool enabled_ RTC_GUARDED_BY(worker_thread()) = false;
+  bool enabled_s_ RTC_GUARDED_BY(signaling_thread()) = false;
   bool payload_type_demuxing_enabled_ RTC_GUARDED_BY(worker_thread()) = true;
   std::vector<StreamParams> local_streams_ RTC_GUARDED_BY(worker_thread());
   std::vector<StreamParams> remote_streams_ RTC_GUARDED_BY(worker_thread());
@@ -382,13 +383,11 @@ class BaseChannel : public ChannelInterface,
   // This object is not owned by the channel so it must outlive it.
   rtc::UniqueRandomIdGenerator* const ssrc_generator_;
 
-  // |negotiated_header_extensions_| is read on the signaling thread, but
-  // written on the worker thread while being sync-invoked from the signal
-  // thread in SdpOfferAnswerHandler::PushdownMediaDescription(). Hence the lock
-  // isn't strictly needed, but it's anyway placed here for future safeness.
-  mutable webrtc::Mutex negotiated_header_extensions_lock_;
+  // |negotiated_header_extensions_| is read and written to on the signaling
+  // thread from the SdpOfferAnswerHandler class (e.g.
+  // PushdownMediaDescription().
   RtpHeaderExtensions negotiated_header_extensions_
-      RTC_GUARDED_BY(negotiated_header_extensions_lock_);
+      RTC_GUARDED_BY(signaling_thread());
 };
 
 // VoiceChannel is a specialization that adds support for early media, DTMF,

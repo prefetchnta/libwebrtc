@@ -15,6 +15,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "api/array_view.h"
@@ -124,10 +125,32 @@ class RTCPReceiver final {
   void NotifyTmmbrUpdated();
 
  private:
+  // A lightweight inlined set of local SSRCs.
+  class RegisteredSsrcs {
+   public:
+    static constexpr size_t kMaxSsrcs = 3;
+    // Initializes the set of registered local SSRCS by extracting them from the
+    // provided `config`.
+    explicit RegisteredSsrcs(const RtpRtcpInterface::Configuration& config);
+
+    // Indicates if `ssrc` is in the set of registered local SSRCs.
+    bool contains(uint32_t ssrc) const {
+      return absl::c_linear_search(ssrcs_, ssrc);
+    }
+
+   private:
+    absl::InlinedVector<uint32_t, kMaxSsrcs> ssrcs_;
+  };
+
   struct PacketInformation;
   struct TmmbrInformation;
   struct RrtrInformation;
   struct LastFirStatus;
+
+  // TODO(boivie): `ReportBlockDataMap` and `ReportBlockMap` should be converted
+  // to std::unordered_map, but as there are too many tests that assume a
+  // specific order, it's not easily done.
+
   // RTCP report blocks mapped by remote SSRC.
   using ReportBlockDataMap = std::map<uint32_t, ReportBlockData>;
   // RTCP report blocks map mapped by source SSRC.
@@ -229,7 +252,8 @@ class RTCPReceiver final {
   const bool receiver_only_;
   ModuleRtpRtcp* const rtp_rtcp_;
   const uint32_t main_ssrc_;
-  const std::set<uint32_t> registered_ssrcs_;
+  // The set of registered local SSRCs.
+  const RegisteredSsrcs registered_ssrcs_;
 
   RtcpBandwidthObserver* const rtcp_bandwidth_observer_;
   RtcpIntraFrameObserver* const rtcp_intra_frame_observer_;
@@ -255,7 +279,7 @@ class RTCPReceiver final {
   std::list<RrtrInformation> received_rrtrs_
       RTC_GUARDED_BY(rtcp_receiver_lock_);
   // Received RRTR information mapped by remote ssrc.
-  std::map<uint32_t, std::list<RrtrInformation>::iterator>
+  std::unordered_map<uint32_t, std::list<RrtrInformation>::iterator>
       received_rrtrs_ssrc_it_ RTC_GUARDED_BY(rtcp_receiver_lock_);
 
   // Estimated rtt, zero when there is no valid estimate.
@@ -264,11 +288,11 @@ class RTCPReceiver final {
 
   int64_t oldest_tmmbr_info_ms_ RTC_GUARDED_BY(rtcp_receiver_lock_);
   // Mapped by remote ssrc.
-  std::map<uint32_t, TmmbrInformation> tmmbr_infos_
+  std::unordered_map<uint32_t, TmmbrInformation> tmmbr_infos_
       RTC_GUARDED_BY(rtcp_receiver_lock_);
 
   ReportBlockMap received_report_blocks_ RTC_GUARDED_BY(rtcp_receiver_lock_);
-  std::map<uint32_t, LastFirStatus> last_fir_
+  std::unordered_map<uint32_t, LastFirStatus> last_fir_
       RTC_GUARDED_BY(rtcp_receiver_lock_);
 
   // The last time we received an RTCP Report block for this module.

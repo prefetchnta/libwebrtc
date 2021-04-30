@@ -30,6 +30,41 @@ rtc_library("fcfs_send_queue") {
   ]
 }
 
+rtc_library("retransmission_error_counter") {
+  deps = [
+    "../../../rtc_base:checks",
+    "../../../rtc_base:rtc_base_approved",
+  ]
+  sources = [
+    "retransmission_error_counter.cc",
+    "retransmission_error_counter.h",
+  ]
+}
+
+rtc_library("retransmission_timeout") {
+  deps = [
+    "../../../rtc_base:checks",
+    "../../../rtc_base:rtc_base_approved",
+  ]
+  sources = [
+    "retransmission_timeout.cc",
+    "retransmission_timeout.h",
+  ]
+}
+
+rtc_library("retransmission_queue") {
+  deps = [
+    ":send_queue",
+    "../../../api:array_view",
+    "../../../rtc_base:checks",
+    "../../../rtc_base:rtc_base_approved",
+  ]
+  sources = [
+    "retransmission_queue.cc",
+    "retransmission_queue.h",
+  ]
+}
+
 if (rtc_include_tests) {
   rtc_source_set("mock_send_queue") {
     testonly = true
@@ -42,12 +77,20 @@ if (rtc_include_tests) {
 
     deps = [
       ":fcfs_send_queue",
+      ":retransmission_error_counter",
+      ":retransmission_queue",
+      ":retransmission_timeout",
       "../../../api:array_view",
       "../../../rtc_base:checks",
       "../../../rtc_base:gunit_helpers",
       "../../../rtc_base:rtc_base_approved",
       "../../../test:test_support",
     ]
-    sources = [ "fcfs_send_queue_test.cc" ]
+    sources = [
+      "fcfs_send_queue_test.cc",
+      "retransmission_error_counter_test.cc",
+      "retransmission_queue_test.cc",
+      "retransmission_timeout_test.cc",
+    ]
   }
 }

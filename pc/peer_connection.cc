@@ -465,10 +465,9 @@ RTCErrorOr<rtc::scoped_refptr<PeerConnection>> PeerConnection::Create(
   }
 
   // The PeerConnection constructor consumes some, but not all, dependencies.
-  rtc::scoped_refptr<PeerConnection> pc(
-      new rtc::RefCountedObject<PeerConnection>(
-          context, options, is_unified_plan, std::move(event_log),
-          std::move(call), dependencies, dtls_enabled));
+  auto pc = rtc::make_ref_counted<PeerConnection>(
+      context, options, is_unified_plan, std::move(event_log), std::move(call),
+      dependencies, dtls_enabled);
   RTCError init_error = pc->Initialize(configuration, std::move(dependencies));
   if (!init_error.ok()) {
     RTC_LOG(LS_ERROR) << "PeerConnection initialization failed";
@@ -632,10 +631,12 @@ RTCError PeerConnection::Initialize(
   if (!IsUnifiedPlan()) {
     rtp_manager()->transceivers()->Add(
         RtpTransceiverProxyWithInternal<RtpTransceiver>::Create(
-            signaling_thread(), new RtpTransceiver(cricket::MEDIA_TYPE_AUDIO)));
+            signaling_thread(),
+            new RtpTransceiver(cricket::MEDIA_TYPE_AUDIO, channel_manager())));
     rtp_manager()->transceivers()->Add(
         RtpTransceiverProxyWithInternal<RtpTransceiver>::Create(
-            signaling_thread(), new RtpTransceiver(cricket::MEDIA_TYPE_VIDEO)));
+            signaling_thread(),
+            new RtpTransceiver(cricket::MEDIA_TYPE_VIDEO, channel_manager())));
   }
 
   int delay_ms = configuration.report_usage_pattern_delay_ms
@@ -2413,21 +2414,20 @@ void PeerConnection::TeardownDataChannelTransport_n() {
 }
 
 // Returns false if bundle is enabled and rtcp_mux is disabled.
-bool PeerConnection::ValidateBundleSettings(const SessionDescription* desc) {
-  bool bundle_enabled = desc->HasGroup(cricket::GROUP_TYPE_BUNDLE);
-  if (!bundle_enabled)
+bool PeerConnection::ValidateBundleSettings(
+    const SessionDescription* desc,
+    const std::map<std::string, const cricket::ContentGroup*>&
+        bundle_groups_by_mid) {
+  if (bundle_groups_by_mid.empty())
     return true;
-
-  const cricket::ContentGroup* bundle_group =
-      desc->GetGroupByName(cricket::GROUP_TYPE_BUNDLE);
-  RTC_DCHECK(bundle_group != NULL);
 
   const cricket::ContentInfos& contents = desc->contents();
   for (cricket::ContentInfos::const_iterator citer = contents.begin();
        citer != contents.end(); ++citer) {
     const cricket::ContentInfo* content = (&*citer);
     RTC_DCHECK(content != NULL);
-    if (bundle_group->HasContentName(content->name) && !content->rejected &&
+    auto it = bundle_groups_by_mid.find(content->name);
+    if (it != bundle_groups_by_mid.end() && !content->rejected &&
         content->type == MediaProtocolType::kRtp) {
       if (!HasRtcpMuxEnabled(content))
         return false;

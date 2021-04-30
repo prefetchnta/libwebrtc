@@ -34,9 +34,9 @@ class RefCountedObject : public T {
           std::forward<P1>(p1),
           std::forward<Args>(args)...) {}
 
-  virtual void AddRef() const { ref_count_.IncRef(); }
+  void AddRef() const override { ref_count_.IncRef(); }
 
-  virtual RefCountReleaseStatus Release() const {
+  RefCountReleaseStatus Release() const override {
     const auto status = ref_count_.DecRef();
     if (status == RefCountReleaseStatus::kDroppedLastRef) {
       delete this;
@@ -53,7 +53,7 @@ class RefCountedObject : public T {
   virtual bool HasOneRef() const { return ref_count_.HasOneRef(); }
 
  protected:
-  virtual ~RefCountedObject() {}
+  ~RefCountedObject() override {}
 
   mutable webrtc::webrtc_impl::RefCounter ref_count_{0};
 
@@ -64,20 +64,13 @@ template <class T>
 class FinalRefCountedObject final : public T {
  public:
   using T::T;
-  // Until c++17 compilers are allowed not to inherit the default constructor,
-  // and msvc doesn't. Thus the default constructor is forwarded explicitly.
+  // Until c++17 compilers are allowed not to inherit the default constructors.
+  // Thus the default constructors are forwarded explicitly.
   FinalRefCountedObject() = default;
+  explicit FinalRefCountedObject(const T& other) : T(other) {}
+  explicit FinalRefCountedObject(T&& other) : T(std::move(other)) {}
   FinalRefCountedObject(const FinalRefCountedObject&) = delete;
   FinalRefCountedObject& operator=(const FinalRefCountedObject&) = delete;
-
-  template <class P0>
-  explicit FinalRefCountedObject(P0&& p0) : T(std::forward<P0>(p0)) {}
-
-  template <class P0, class P1, class... Args>
-  FinalRefCountedObject(P0&& p0, P1&& p1, Args&&... args)
-      : T(std::forward<P0>(p0),
-          std::forward<P1>(p1),
-          std::forward<Args>(args)...) {}
 
   void AddRef() const { ref_count_.IncRef(); }
   void Release() const {
