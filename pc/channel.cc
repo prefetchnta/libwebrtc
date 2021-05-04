@@ -326,11 +326,9 @@ void BaseChannel::SetContent_s(const MediaContentDescription* content,
 }
 
 bool BaseChannel::SetPayloadTypeDemuxingEnabled(bool enabled) {
+  RTC_DCHECK_RUN_ON(worker_thread());
   TRACE_EVENT0("webrtc", "BaseChannel::SetPayloadTypeDemuxingEnabled");
-  return InvokeOnWorker<bool>(RTC_FROM_HERE, [this, enabled] {
-    RTC_DCHECK_RUN_ON(worker_thread());
-    return SetPayloadTypeDemuxingEnabled_w(enabled);
-  });
+  return SetPayloadTypeDemuxingEnabled_w(enabled);
 }
 
 bool BaseChannel::IsReadyToReceiveMedia_w() const {
@@ -1067,9 +1065,9 @@ void VideoChannel::UpdateMediaSendRecvState_w() {
 }
 
 void VideoChannel::FillBitrateInfo(BandwidthEstimationInfo* bwe_info) {
+  RTC_DCHECK_RUN_ON(worker_thread());
   VideoMediaChannel* mc = media_channel();
-  InvokeOnWorker<void>(RTC_FROM_HERE,
-                       [mc, bwe_info] { mc->FillBitrateInfo(bwe_info); });
+  mc->FillBitrateInfo(bwe_info);
 }
 
 bool VideoChannel::SetLocalContent_w(const MediaContentDescription* content,
