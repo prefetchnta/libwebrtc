@@ -81,6 +81,7 @@ rtc_library("rtc_media_base") {
     "../api/crypto:frame_decryptor_interface",
     "../api/crypto:frame_encryptor_interface",
     "../api/crypto:options",
+    "../api/transport:datagram_transport_interface",
     "../api/transport:stun_types",
     "../api/transport:webrtc_key_value_config",
     "../api/transport/rtp:rtp_source",
@@ -106,6 +107,8 @@ rtc_library("rtc_media_base") {
     "../rtc_base/synchronization:mutex",
     "../rtc_base/system:file_wrapper",
     "../rtc_base/system:rtc_export",
+    "../rtc_base/task_utils:pending_task_safety_flag",
+    "../rtc_base/task_utils:to_queued_task",
     "../rtc_base/third_party/sigslot",
     "../system_wrappers:field_trial",
   ]
@@ -379,12 +382,43 @@ rtc_library("rtc_media_engine_defaults") {
 rtc_source_set("rtc_data_sctp_transport_internal") {
   sources = [ "sctp/sctp_transport_internal.h" ]
   deps = [
+    "../api/transport:datagram_transport_interface",
     "../media:rtc_media_base",
     "../p2p:rtc_p2p",
     "../rtc_base:rtc_base_approved",
     "../rtc_base:threading",
     "../rtc_base/third_party/sigslot",
   ]
+}
+
+if (rtc_build_dcsctp) {
+  rtc_library("rtc_data_dcsctp_transport") {
+    sources = [
+      "sctp/dcsctp_transport.cc",
+      "sctp/dcsctp_transport.h",
+    ]
+    deps = [
+      ":rtc_data_sctp_transport_internal",
+      "../api:array_view",
+      "../media:rtc_media_base",
+      "../net/dcsctp/public:socket",
+      "../net/dcsctp/public:types",
+      "../net/dcsctp/socket:dcsctp_socket",
+      "../net/dcsctp/timer:task_queue_timeout",
+      "../p2p:rtc_p2p",
+      "../rtc_base:checks",
+      "../rtc_base:rtc_base_approved",
+      "../rtc_base:threading",
+      "../rtc_base/task_utils:pending_task_safety_flag",
+      "../rtc_base/task_utils:to_queued_task",
+      "../rtc_base/third_party/sigslot:sigslot",
+      "../system_wrappers",
+    ]
+    absl_deps += [
+      "//third_party/abseil-cpp/absl/strings:strings",
+      "//third_party/abseil-cpp/absl/types:optional",
+    ]
+  }
 }
 
 if (rtc_build_usrsctp) {
@@ -426,11 +460,22 @@ rtc_library("rtc_data_sctp_transport_factory") {
     ":rtc_data_sctp_transport_internal",
     "../api/transport:sctp_transport_factory_interface",
     "../rtc_base:threading",
+    "../rtc_base/experiments:field_trial_parser",
     "../rtc_base/system:unused",
   ]
 
   if (rtc_enable_sctp) {
-    assert(rtc_build_usrsctp, "An SCTP backend is required to enable SCTP")
+    assert(rtc_build_dcsctp || rtc_build_usrsctp,
+           "An SCTP backend is required to enable SCTP")
+  }
+
+  if (rtc_build_dcsctp) {
+    defines += [ "WEBRTC_HAVE_DCSCTP" ]
+    deps += [
+      ":rtc_data_dcsctp_transport",
+      "../system_wrappers",
+      "../system_wrappers:field_trial",
+    ]
   }
 
   if (rtc_build_usrsctp) {

@@ -702,7 +702,7 @@ WebRtcVideoChannel::WebRtcVideoChannel(
     webrtc::VideoEncoderFactory* encoder_factory,
     webrtc::VideoDecoderFactory* decoder_factory,
     webrtc::VideoBitrateAllocatorFactory* bitrate_allocator_factory)
-    : VideoMediaChannel(config),
+    : VideoMediaChannel(config, call->network_thread()),
       worker_thread_(call->worker_thread()),
       call_(call),
       unsignalled_ssrc_handler_(&default_unsignalled_ssrc_handler_),
@@ -1869,7 +1869,7 @@ void WebRtcVideoChannel::OnNetworkRouteChanged(
 }
 
 void WebRtcVideoChannel::SetInterface(NetworkInterface* iface) {
-  RTC_DCHECK_RUN_ON(&thread_checker_);
+  RTC_DCHECK_RUN_ON(&network_thread_checker_);
   MediaChannel::SetInterface(iface);
   // Set the RTP recv/send buffer to a bigger size.
 
@@ -2018,27 +2018,13 @@ std::vector<webrtc::RtpSource> WebRtcVideoChannel::GetSources(
 bool WebRtcVideoChannel::SendRtp(const uint8_t* data,
                                  size_t len,
                                  const webrtc::PacketOptions& options) {
-  rtc::CopyOnWriteBuffer packet(data, len, kMaxRtpPacketLen);
-  rtc::PacketOptions rtc_options;
-  rtc_options.packet_id = options.packet_id;
-  if (DscpEnabled()) {
-    rtc_options.dscp = PreferredDscp();
-  }
-  rtc_options.info_signaled_after_sent.included_in_feedback =
-      options.included_in_feedback;
-  rtc_options.info_signaled_after_sent.included_in_allocation =
-      options.included_in_allocation;
-  return MediaChannel::SendPacket(&packet, rtc_options);
+  MediaChannel::SendRtp(data, len, options);
+  return true;
 }
 
 bool WebRtcVideoChannel::SendRtcp(const uint8_t* data, size_t len) {
-  rtc::CopyOnWriteBuffer packet(data, len, kMaxRtpPacketLen);
-  rtc::PacketOptions rtc_options;
-  if (DscpEnabled()) {
-    rtc_options.dscp = PreferredDscp();
-  }
-
-  return MediaChannel::SendRtcp(&packet, rtc_options);
+  MediaChannel::SendRtcp(data, len);
+  return true;
 }
 
 WebRtcVideoChannel::WebRtcVideoSendStream::VideoSendStreamParameters::

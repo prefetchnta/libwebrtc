@@ -245,6 +245,7 @@ webrtc_fuzzer_test("congestion_controller_feedback_fuzzer") {
     "../../modules/remote_bitrate_estimator",
     "../../modules/rtp_rtcp:rtp_rtcp_format",
   ]
+  absl_deps = [ "//third_party/abseil-cpp/absl/functional:bind_front" ]
 }
 
 rtc_library("audio_decoder_fuzzer") {
@@ -600,6 +601,17 @@ webrtc_fuzzer_test("sctp_utils_fuzzer") {
     "../../api:libjingle_peerconnection_api",
     "../../pc:libjingle_peerconnection",
     "../../pc:rtc_pc_base",
+    "../../rtc_base:rtc_base_approved",
+  ]
+}
+
+webrtc_fuzzer_test("dcsctp_socket_fuzzer") {
+  sources = [ "dcsctp_socket_fuzzer.cc" ]
+  deps = [
+    "../../net/dcsctp/fuzzers:dcsctp_fuzzers",
+    "../../net/dcsctp/public:socket",
+    "../../net/dcsctp/public:types",
+    "../../net/dcsctp/socket:dcsctp_socket",
     "../../rtc_base:rtc_base_approved",
   ]
 }

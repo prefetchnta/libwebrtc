@@ -279,8 +279,16 @@ void DcSctpSocket::Shutdown() {
     // "Upon receipt of the SHUTDOWN primitive from its upper layer, the
     // endpoint enters the SHUTDOWN-PENDING state and remains there until all
     // outstanding data has been acknowledged by its peer."
-    SetState(State::kShutdownPending, "Shutdown called");
-    MaybeSendShutdownOrAck();
+
+    // TODO(webrtc:12739): Remove this check, as it just hides the problem that
+    // the socket can transition from ShutdownSent to ShutdownPending, or
+    // ShutdownAckSent to ShutdownPending which is illegal.
+    if (state_ != State::kShutdownSent && state_ != State::kShutdownAckSent) {
+      SetState(State::kShutdownPending, "Shutdown called");
+      t1_init_->Stop();
+      t1_cookie_->Stop();
+      MaybeSendShutdownOrAck();
+    }
   } else {
     // Connection closed before even starting to connect, or during the initial
     // connection phase. There is no outstanding data, so the socket can just
@@ -366,9 +374,10 @@ SendStatus DcSctpSocket::Send(DcSctpMessage message,
     return SendStatus::kErrorResourceExhaustion;
   }
 
-  send_queue_.Add(callbacks_.TimeMillis(), std::move(message), send_options);
+  TimeMs now = callbacks_.TimeMillis();
+  send_queue_.Add(now, std::move(message), send_options);
   if (tcb_ != nullptr) {
-    tcb_->SendBufferedPackets();
+    tcb_->SendBufferedPackets(now);
   }
 
   RTC_DCHECK(IsConsistent());
@@ -422,6 +431,10 @@ SocketState DcSctpSocket::state() const {
     case State::kShutdownAckSent:
       return SocketState::kShuttingDown;
   }
+}
+
+void DcSctpSocket::SetMaxMessageSize(size_t max_message_size) {
+  options_.max_message_size = max_message_size;
 }
 
 void DcSctpSocket::MaybeSendShutdownOnPacketReceived(const SctpPacket& packet) {
@@ -757,12 +770,7 @@ absl::optional<DurationMs> DcSctpSocket::OnShutdownTimerExpiry() {
                        << " has expired: " << t2_shutdown_->expiration_count()
                        << "/" << t2_shutdown_->options().max_restarts;
 
-  // https://tools.ietf.org/html/rfc4960#section-9.2
-  // "If the timer expires, the endpoint must resend the SHUTDOWN with the
-  // updated last sequential TSN received from its peer."
-  if (t2_shutdown_->is_running()) {
-    SendShutdown();
-  } else {
+  if (!t2_shutdown_->is_running()) {
     // https://tools.ietf.org/html/rfc4960#section-9.2
     // "An endpoint should limit the number of retransmissions of the SHUTDOWN
     // chunk to the protocol parameter 'Association.Max.Retrans'. If this
@@ -775,7 +783,14 @@ absl::optional<DurationMs> DcSctpSocket::OnShutdownTimerExpiry() {
                              .Build())));
 
     InternalClose(ErrorKind::kTooManyRetries, "No SHUTDOWN_ACK received");
+    RTC_DCHECK(IsConsistent());
+    return absl::nullopt;
   }
+
+  // https://tools.ietf.org/html/rfc4960#section-9.2
+  // "If the timer expires, the endpoint must resend the SHUTDOWN with the
+  // updated last sequential TSN received from its peer."
+  SendShutdown();
   RTC_DCHECK(IsConsistent());
   return tcb_->current_rto();
 }
@@ -1015,6 +1030,7 @@ void DcSctpSocket::HandleInit(const CommonHeader& header,
 
 void DcSctpSocket::SendCookieEcho() {
   RTC_DCHECK(tcb_ != nullptr);
+  TimeMs now = callbacks_.TimeMillis();
   SctpPacket::Builder b = tcb_->PacketBuilder();
   b.Add(*cookie_echo_chunk_);
 
@@ -1022,7 +1038,7 @@ void DcSctpSocket::SendCookieEcho() {
   // "The COOKIE ECHO chunk can be bundled with any pending outbound DATA
   // chunks, but it MUST be the first chunk in the packet and until the COOKIE
   // ACK is returned the sender MUST NOT send any other packets to the peer."
-  tcb_->SendBufferedPackets(b, /*only_one_packet=*/true);
+  tcb_->SendBufferedPackets(b, now, /*only_one_packet=*/true);
 }
 
 void DcSctpSocket::HandleInitAck(
@@ -1135,7 +1151,7 @@ void DcSctpSocket::HandleCookieEcho(
   // "A COOKIE ACK chunk may be bundled with any pending DATA chunks (and/or
   // SACK chunks), but the COOKIE ACK chunk MUST be the first chunk in the
   // packet."
-  tcb_->SendBufferedPackets(b);
+  tcb_->SendBufferedPackets(b, callbacks_.TimeMillis());
 }
 
 bool DcSctpSocket::HandleCookieEchoWithTCB(const CommonHeader& header,
@@ -1236,7 +1252,7 @@ void DcSctpSocket::HandleCookieAck(
   t1_cookie_->Stop();
   cookie_echo_chunk_ = absl::nullopt;
   SetState(State::kEstablished, "COOKIE_ACK received");
-  tcb_->SendBufferedPackets();
+  tcb_->SendBufferedPackets(callbacks_.TimeMillis());
   callbacks_.OnConnected();
 }
 
@@ -1253,14 +1269,14 @@ void DcSctpSocket::HandleSack(const CommonHeader& header,
   absl::optional<SackChunk> chunk = SackChunk::Parse(descriptor.data);
 
   if (ValidateParseSuccess(chunk) && ValidateHasTCB()) {
+    TimeMs now = callbacks_.TimeMillis();
     SackChunk sack = ChunkValidators::Clean(*std::move(chunk));
 
-    if (tcb_->retransmission_queue().HandleSack(callbacks_.TimeMillis(),
-                                                sack)) {
+    if (tcb_->retransmission_queue().HandleSack(now, sack)) {
       MaybeSendShutdownOrAck();
       // Receiving an ACK will decrease outstanding bytes (maybe now below
       // cwnd?) or indicate packet loss that may result in sending FORWARD-TSN.
-      tcb_->SendBufferedPackets();
+      tcb_->SendBufferedPackets(now);
     } else {
       RTC_DLOG(LS_VERBOSE) << log_prefix()
                            << "Dropping out-of-order SACK with TSN "
@@ -1358,6 +1374,10 @@ void DcSctpSocket::HandleShutdown(
     // state restarting its T2-shutdown timer."
     SendShutdownAck();
     SetState(State::kShutdownAckSent, "SHUTDOWN received");
+  } else if (state_ == State::kShutdownAckSent) {
+    // TODO(webrtc:12739): This condition should be removed and handled by the
+    // next (state_ != State::kShutdownReceived).
+    return;
   } else if (state_ != State::kShutdownReceived) {
     RTC_DLOG(LS_VERBOSE) << log_prefix()
                          << "Received SHUTDOWN - shutting down the socket";

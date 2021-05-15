@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -51,8 +52,9 @@ inline int GetUniqueSeed() {
 
 class MockDcSctpSocketCallbacks : public DcSctpSocketCallbacks {
  public:
-  MockDcSctpSocketCallbacks()
-      : random_(internal::GetUniqueSeed()),
+  explicit MockDcSctpSocketCallbacks(absl::string_view name = "")
+      : log_prefix_(name.empty() ? "" : std::string(name) + ": "),
+        random_(internal::GetUniqueSeed()),
         timeout_manager_([this]() { return now_; }) {
     ON_CALL(*this, SendPacket)
         .WillByDefault([this](rtc::ArrayView<const uint8_t> data) {
@@ -65,10 +67,18 @@ class MockDcSctpSocketCallbacks : public DcSctpSocketCallbacks {
         });
 
     ON_CALL(*this, OnError)
-        .WillByDefault([](ErrorKind error, absl::string_view message) {
+        .WillByDefault([this](ErrorKind error, absl::string_view message) {
           RTC_LOG(LS_WARNING)
-              << "Socket error: " << ToString(error) << "; " << message;
+              << log_prefix_ << "Socket error: " << ToString(error) << "; "
+              << message;
         });
+    ON_CALL(*this, OnAborted)
+        .WillByDefault([this](ErrorKind error, absl::string_view message) {
+          RTC_LOG(LS_WARNING)
+              << log_prefix_ << "Socket abort: " << ToString(error) << "; "
+              << message;
+        });
+    ON_CALL(*this, TimeMillis).WillByDefault([this]() { return now_; });
   }
   MOCK_METHOD(void,
               SendPacket,
@@ -79,8 +89,7 @@ class MockDcSctpSocketCallbacks : public DcSctpSocketCallbacks {
     return timeout_manager_.CreateTimeout();
   }
 
-  TimeMs TimeMillis() override { return now_; }
-
+  MOCK_METHOD(TimeMs, TimeMillis, (), (override));
   uint32_t GetRandomInt(uint32_t low, uint32_t high) override {
     return random_.Rand(low, high);
   }
@@ -134,9 +143,12 @@ class MockDcSctpSocketCallbacks : public DcSctpSocketCallbacks {
   void AdvanceTime(DurationMs duration_ms) { now_ = now_ + duration_ms; }
   void SetTime(TimeMs now) { now_ = now; }
 
-  std::vector<TimeoutID> RunTimers() { return timeout_manager_.RunTimers(); }
+  absl::optional<TimeoutID> GetNextExpiredTimeout() {
+    return timeout_manager_.GetNextExpiredTimeout();
+  }
 
  private:
+  const std::string log_prefix_;
   TimeMs now_ = TimeMs(0);
   webrtc::Random random_;
   FakeTimeoutManager timeout_manager_;

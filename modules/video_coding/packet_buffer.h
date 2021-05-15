@@ -18,6 +18,7 @@
 
 #include "absl/base/attributes.h"
 #include "api/rtp_packet_info.h"
+#include "api/units/timestamp.h"
 #include "api/video/encoded_image.h"
 #include "modules/rtp_rtcp/source/rtp_packet_received.h"
 #include "modules/rtp_rtcp/source/rtp_video_header.h"
@@ -33,8 +34,7 @@ class PacketBuffer {
   struct Packet {
     Packet() = default;
     Packet(const RtpPacketReceived& rtp_packet,
-           const RTPVideoHeader& video_header,
-           int64_t receive_time_ms);
+           const RTPVideoHeader& video_header);
     Packet(const Packet&) = delete;
     Packet(Packet&&) = delete;
     Packet& operator=(const Packet&) = delete;
@@ -63,8 +63,6 @@ class PacketBuffer {
 
     rtc::CopyOnWriteBuffer video_payload;
     RTPVideoHeader video_header;
-
-    RtpPacketInfo packet_info;
   };
   struct InsertResult {
     std::vector<std::unique_ptr<Packet>> packets;

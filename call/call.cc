@@ -19,6 +19,7 @@
 #include <utility>
 #include <vector>
 
+#include "absl/functional/bind_front.h"
 #include "absl/types/optional.h"
 #include "api/rtc_event_log/rtc_event_log.h"
 #include "api/sequence_checker.h"
@@ -658,7 +659,12 @@ Call::Call(Clock* clock,
       configured_max_padding_bitrate_bps_(0),
       estimated_send_bitrate_kbps_counter_(clock_, nullptr, true),
       pacer_bitrate_kbps_counter_(clock_, nullptr, true),
-      receive_side_cc_(clock_, transport_send->packet_router()),
+      receive_side_cc_(clock,
+                       absl::bind_front(&PacketRouter::SendCombinedRtcpPacket,
+                                        transport_send->packet_router()),
+                       absl::bind_front(&PacketRouter::SendRemb,
+                                        transport_send->packet_router()),
+                       /*network_state_estimator=*/nullptr),
       receive_time_calculator_(ReceiveTimeCalculator::CreateFromFieldTrial()),
       video_send_delay_stats_(new SendDelayStats(clock_)),
       start_ms_(clock_->TimeInMilliseconds()),
@@ -1363,6 +1369,19 @@ PacketReceiver::DeliveryStatus Call::DeliverRtcp(MediaType media_type,
                                                  const uint8_t* packet,
                                                  size_t length) {
   TRACE_EVENT0("webrtc", "Call::DeliverRtcp");
+
+  // TODO(bugs.webrtc.org/11993): This DCHECK is here just to maintain the
+  // invariant that currently the only call path to this function is via
+  // `PeerConnection::InitializeRtcpCallback()`. DeliverRtp on the other hand
+  // gets called via the channel classes and
+  // WebRtc[Audio|Video]Channel's `OnPacketReceived`. We'll remove the
+  // PeerConnection involvement as well as
+  // `JsepTransportController::OnRtcpPacketReceived_n` and `rtcp_handler`
+  // and make sure that the flow of packets is consistent from the
+  // `RtpTransport` class, via the *Channel and *Engine classes and into Call.
+  // This way we'll also know more about the context of the packet.
+  RTC_DCHECK_EQ(media_type, MediaType::ANY);
+
   // TODO(pbos): Make sure it's a valid packet.
   //             Return DELIVERY_UNKNOWN_SSRC if it can be determined that
   //             there's no receiver of the packet.
@@ -1409,6 +1428,7 @@ PacketReceiver::DeliveryStatus Call::DeliverRtp(MediaType media_type,
                                                 rtc::CopyOnWriteBuffer packet,
                                                 int64_t packet_time_us) {
   TRACE_EVENT0("webrtc", "Call::DeliverRtp");
+  RTC_DCHECK_NE(media_type, MediaType::ANY);
 
   RtpPacketReceived parsed_packet;
   if (!parsed_packet.Parse(std::move(packet)))
@@ -1421,9 +1441,9 @@ PacketReceiver::DeliveryStatus Call::DeliverRtp(MediaType media_type,
       packet_time_us = receive_time_calculator_->ReconcileReceiveTimes(
           packet_time_us, rtc::TimeUTCMicros(), clock_->TimeInMicroseconds());
     }
-    parsed_packet.set_arrival_time_ms((packet_time_us + 500) / 1000);
+    parsed_packet.set_arrival_time(Timestamp::Micros(packet_time_us));
   } else {
-    parsed_packet.set_arrival_time_ms(clock_->TimeInMilliseconds());
+    parsed_packet.set_arrival_time(clock_->CurrentTime());
   }
 
   // We might get RTP keep-alive packets in accordance with RFC6263 section 4.6.
@@ -1459,7 +1479,7 @@ PacketReceiver::DeliveryStatus Call::DeliverRtp(MediaType media_type,
       received_audio_bytes_per_second_counter_.Add(length);
       event_log_->Log(
           std::make_unique<RtcEventRtpPacketIncoming>(parsed_packet));
-      const int64_t arrival_time_ms = parsed_packet.arrival_time_ms();
+      const int64_t arrival_time_ms = parsed_packet.arrival_time().ms();
       if (!first_received_rtp_audio_ms_) {
         first_received_rtp_audio_ms_.emplace(arrival_time_ms);
       }
@@ -1473,7 +1493,7 @@ PacketReceiver::DeliveryStatus Call::DeliverRtp(MediaType media_type,
       received_video_bytes_per_second_counter_.Add(length);
       event_log_->Log(
           std::make_unique<RtcEventRtpPacketIncoming>(parsed_packet));
-      const int64_t arrival_time_ms = parsed_packet.arrival_time_ms();
+      const int64_t arrival_time_ms = parsed_packet.arrival_time().ms();
       if (!first_received_rtp_video_ms_) {
         first_received_rtp_video_ms_.emplace(arrival_time_ms);
       }
@@ -1561,7 +1581,7 @@ void Call::NotifyBweOfReceivedPacket(const RtpPacketReceived& packet,
 
   ReceivedPacket packet_msg;
   packet_msg.size = DataSize::Bytes(packet.payload_size());
-  packet_msg.receive_time = Timestamp::Millis(packet.arrival_time_ms());
+  packet_msg.receive_time = packet.arrival_time();
   if (header.extension.hasAbsoluteSendTime) {
     packet_msg.send_time = header.extension.GetAbsoluteSendTimestamp();
   }
@@ -1581,8 +1601,8 @@ void Call::NotifyBweOfReceivedPacket(const RtpPacketReceived& packet,
   if (media_type == MediaType::VIDEO ||
       (use_send_side_bwe && header.extension.hasTransportSequenceNumber)) {
     receive_side_cc_.OnReceivedPacket(
-        packet.arrival_time_ms(), packet.payload_size() + packet.padding_size(),
-        header);
+        packet.arrival_time().ms(),
+        packet.payload_size() + packet.padding_size(), header);
   }
 }
 

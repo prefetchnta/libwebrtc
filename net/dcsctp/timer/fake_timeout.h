@@ -18,7 +18,9 @@
 #include <utility>
 #include <vector>
 
+#include "absl/types/optional.h"
 #include "net/dcsctp/public/timeout.h"
+#include "rtc_base/checks.h"
 
 namespace dcsctp {
 
@@ -32,14 +34,18 @@ class FakeTimeout : public Timeout {
   ~FakeTimeout() override { on_delete_(this); }
 
   void Start(DurationMs duration_ms, TimeoutID timeout_id) override {
+    RTC_DCHECK(expiry_ == TimeMs::InfiniteFuture());
     timeout_id_ = timeout_id;
     expiry_ = get_time_() + duration_ms;
   }
-  void Stop() override { expiry_ = InfiniteFuture(); }
+  void Stop() override {
+    RTC_DCHECK(expiry_ != TimeMs::InfiniteFuture());
+    expiry_ = TimeMs::InfiniteFuture();
+  }
 
   bool EvaluateHasExpired(TimeMs now) {
     if (now >= expiry_) {
-      expiry_ = InfiniteFuture();
+      expiry_ = TimeMs::InfiniteFuture();
       return true;
     }
     return false;
@@ -48,15 +54,11 @@ class FakeTimeout : public Timeout {
   TimeoutID timeout_id() const { return timeout_id_; }
 
  private:
-  static constexpr TimeMs InfiniteFuture() {
-    return TimeMs(std::numeric_limits<TimeMs::UnderlyingType>::max());
-  }
-
   const std::function<TimeMs()> get_time_;
   const std::function<void(FakeTimeout*)> on_delete_;
 
   TimeoutID timeout_id_ = TimeoutID(0);
-  TimeMs expiry_ = InfiniteFuture();
+  TimeMs expiry_ = TimeMs::InfiniteFuture();
 };
 
 class FakeTimeoutManager {
@@ -73,15 +75,20 @@ class FakeTimeoutManager {
     return timer;
   }
 
-  std::vector<TimeoutID> RunTimers() {
+  // NOTE: This can't return a vector, as calling EvaluateHasExpired requires
+  // calling socket->HandleTimeout directly afterwards, as the owning Timer
+  // still believes it's running, and it needs to be updated to set
+  // Timer::is_running_ to false before you operate on the Timer or Timeout
+  // again.
+  absl::optional<TimeoutID> GetNextExpiredTimeout() {
     TimeMs now = get_time_();
     std::vector<TimeoutID> expired_timers;
     for (auto& timer : timers_) {
       if (timer->EvaluateHasExpired(now)) {
-        expired_timers.push_back(timer->timeout_id());
+        return timer->timeout_id();
       }
     }
-    return expired_timers;
+    return absl::nullopt;
   }
 
  private:

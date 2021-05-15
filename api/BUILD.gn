@@ -90,6 +90,7 @@ rtc_library("rtp_packet_info") {
     ":scoped_refptr",
     "../rtc_base:rtc_base_approved",
     "../rtc_base/system:rtc_export",
+    "units:timestamp",
   ]
   absl_deps = [ "//third_party/abseil-cpp/absl/types:optional" ]
 }
@@ -196,6 +197,7 @@ rtc_library("libjingle_peerconnection_api") {
     "units:data_rate",
     "units:timestamp",
     "video:encoded_image",
+    "video:video_bitrate_allocator_factory",
     "video:video_frame",
     "video:video_rtp_headers",
 
