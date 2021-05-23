@@ -142,7 +142,6 @@ RTCPReceiver::RTCPReceiver(const RtpRtcpInterface::Configuration& config,
       xr_rrtr_status_(config.non_sender_rtt_measurement),
       xr_rr_rtt_ms_(0),
       oldest_tmmbr_info_ms_(0),
-      stats_callback_(config.rtcp_statistics_callback),
       cname_callback_(config.rtcp_cname_callback),
       report_block_data_observer_(config.report_block_data_observer),
       packet_type_counter_observer_(config.rtcp_packet_type_counter_observer),
@@ -333,8 +332,7 @@ RTCPReceiver::ConsumeReceivedXrReferenceTimeInfo() {
   std::vector<rtcp::ReceiveTimeInfo> last_xr_rtis;
   last_xr_rtis.reserve(last_xr_rtis_size);
 
-  const uint32_t now_ntp =
-      CompactNtp(TimeMicrosToNtp(clock_->TimeInMicroseconds()));
+  const uint32_t now_ntp = CompactNtp(clock_->CurrentNtpTime());
 
   for (size_t i = 0; i < last_xr_rtis_size; ++i) {
     RrtrInformation& rrtr = received_rrtrs_.front();
@@ -482,7 +480,7 @@ void RTCPReceiver::HandleSenderReport(const CommonHeader& rtcp_block,
 
     remote_sender_ntp_time_ = sender_report.ntp();
     remote_sender_rtp_time_ = sender_report.rtp_timestamp();
-    last_received_sr_ntp_ = TimeMicrosToNtp(clock_->TimeInMicroseconds());
+    last_received_sr_ntp_ = clock_->CurrentNtpTime();
     remote_sender_packet_count_ = sender_report.sender_packet_count();
     remote_sender_octet_count_ = sender_report.sender_octet_count();
     remote_sender_reports_count_++;
@@ -572,7 +570,7 @@ void RTCPReceiver::HandleReportBlock(const ReportBlock& report_block,
     uint32_t delay_ntp = report_block.delay_since_last_sr();
     // Local NTP time.
     uint32_t receive_time_ntp =
-        CompactNtp(TimeMicrosToNtp(last_received_rb_.us()));
+        CompactNtp(clock_->ConvertTimestampToNtpTime(last_received_rb_));
 
     // RTT in 1/(2^16) seconds.
     uint32_t rtt_ntp = receive_time_ntp - delay_ntp - send_time_ntp;
@@ -775,8 +773,7 @@ void RTCPReceiver::HandleXr(const CommonHeader& rtcp_block,
 void RTCPReceiver::HandleXrReceiveReferenceTime(uint32_t sender_ssrc,
                                                 const rtcp::Rrtr& rrtr) {
   uint32_t received_remote_mid_ntp_time = CompactNtp(rrtr.ntp());
-  uint32_t local_receive_mid_ntp_time =
-      CompactNtp(TimeMicrosToNtp(clock_->TimeInMicroseconds()));
+  uint32_t local_receive_mid_ntp_time = CompactNtp(clock_->CurrentNtpTime());
 
   auto it = received_rrtrs_ssrc_it_.find(sender_ssrc);
   if (it != received_rrtrs_ssrc_it_.end()) {
@@ -810,7 +807,7 @@ void RTCPReceiver::HandleXrDlrrReportBlock(const rtcp::ReceiveTimeInfo& rti) {
     return;
 
   uint32_t delay_ntp = rti.delay_since_last_rr;
-  uint32_t now_ntp = CompactNtp(TimeMicrosToNtp(clock_->TimeInMicroseconds()));
+  uint32_t now_ntp = CompactNtp(clock_->CurrentNtpTime());
 
   uint32_t rtt_ntp = now_ntp - delay_ntp - send_time_ntp;
   xr_rr_rtt_ms_ = CompactNtpRttToMs(rtt_ntp);
@@ -1105,18 +1102,6 @@ void RTCPReceiver::TriggerCallbacksFromRtcpPacket(
   }
 
   if (!receiver_only_) {
-    if (stats_callback_) {
-      for (const auto& report_block : packet_information.report_blocks) {
-        RtcpStatistics stats;
-        stats.packets_lost = report_block.packets_lost;
-        stats.extended_highest_sequence_number =
-            report_block.extended_highest_sequence_number;
-        stats.fraction_lost = report_block.fraction_lost;
-        stats.jitter = report_block.jitter;
-
-        stats_callback_->StatisticsUpdated(stats, report_block.source_ssrc);
-      }
-    }
     if (report_block_data_observer_) {
       for (const auto& report_block_data :
            packet_information.report_block_datas) {

@@ -16,8 +16,12 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "api/array_view.h"
+#include "api/rtp_packet_info.h"
+#include "api/rtp_packet_infos.h"
 #include "common_audio/include/audio_util.h"
 #include "modules/audio_mixer/audio_frame_manipulator.h"
 #include "modules/audio_mixer/audio_mixer_impl.h"
@@ -26,6 +30,7 @@
 #include "modules/audio_processing/logging/apm_data_dumper.h"
 #include "rtc_base/arraysize.h"
 #include "rtc_base/checks.h"
+#include "rtc_base/numerics/safe_conversions.h"
 #include "system_wrappers/include/metrics.h"
 
 namespace webrtc {
@@ -53,11 +58,23 @@ void SetAudioFrameFields(rtc::ArrayView<const AudioFrame* const> mix_list,
 
   if (mix_list.empty()) {
     audio_frame_for_mixing->elapsed_time_ms_ = -1;
-  } else if (mix_list.size() == 1) {
+  } else {
     audio_frame_for_mixing->timestamp_ = mix_list[0]->timestamp_;
     audio_frame_for_mixing->elapsed_time_ms_ = mix_list[0]->elapsed_time_ms_;
     audio_frame_for_mixing->ntp_time_ms_ = mix_list[0]->ntp_time_ms_;
-    audio_frame_for_mixing->packet_infos_ = mix_list[0]->packet_infos_;
+    std::vector<RtpPacketInfo> packet_infos;
+    for (const auto& frame : mix_list) {
+      audio_frame_for_mixing->timestamp_ =
+          std::min(audio_frame_for_mixing->timestamp_, frame->timestamp_);
+      audio_frame_for_mixing->ntp_time_ms_ =
+          std::min(audio_frame_for_mixing->ntp_time_ms_, frame->ntp_time_ms_);
+      audio_frame_for_mixing->elapsed_time_ms_ = std::max(
+          audio_frame_for_mixing->elapsed_time_ms_, frame->elapsed_time_ms_);
+      packet_infos.insert(packet_infos.end(), frame->packet_infos_.begin(),
+                          frame->packet_infos_.end());
+    }
+    audio_frame_for_mixing->packet_infos_ =
+        RtpPacketInfos(std::move(packet_infos));
   }
 }
 
@@ -207,10 +224,10 @@ void FrameCombiner::LogMixingStats(
     uma_logging_counter_ = 0;
     RTC_HISTOGRAM_COUNTS_100("WebRTC.Audio.AudioMixer.NumIncomingStreams",
                              static_cast<int>(number_of_streams));
-    RTC_HISTOGRAM_ENUMERATION(
-        "WebRTC.Audio.AudioMixer.NumIncomingActiveStreams",
-        static_cast<int>(mix_list.size()),
-        AudioMixerImpl::kMaximumAmountOfMixedAudioSources);
+    RTC_HISTOGRAM_COUNTS_LINEAR(
+        "WebRTC.Audio.AudioMixer.NumIncomingActiveStreams2",
+        rtc::dchecked_cast<int>(mix_list.size()), /*min=*/1, /*max=*/16,
+        /*bucket_count=*/16);
 
     using NativeRate = AudioProcessing::NativeRate;
     static constexpr NativeRate native_rates[] = {

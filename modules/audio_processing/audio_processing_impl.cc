@@ -271,7 +271,8 @@ AudioProcessingImpl::AudioProcessingImpl(
                  !field_trial::IsEnabled(
                      "WebRTC-ApmExperimentalMultiChannelCaptureKillSwitch"),
                  EnforceSplitBandHpf(),
-                 MinimizeProcessingForUnusedOutput()),
+                 MinimizeProcessingForUnusedOutput(),
+                 field_trial::IsEnabled("WebRTC-TransientSuppressorForcedOff")),
       capture_(),
       capture_nonlocked_() {
   RTC_LOG(LS_INFO) << "Injected APM submodules:"
@@ -1732,7 +1733,8 @@ bool AudioProcessingImpl::UpdateActiveSubmoduleStates() {
 }
 
 void AudioProcessingImpl::InitializeTransientSuppressor() {
-  if (config_.transient_suppression.enabled) {
+  if (config_.transient_suppression.enabled &&
+      !constants_.transient_suppressor_forced_off) {
     // Attempt to create a transient suppressor, if one is not already created.
     if (!submodules_.transient_suppressor) {
       submodules_.transient_suppressor =
@@ -1916,7 +1918,10 @@ void AudioProcessingImpl::InitializeGainController1() {
         config_.gain_controller1.analog_gain_controller.clipped_level_min,
         !config_.gain_controller1.analog_gain_controller
              .enable_digital_adaptive,
-        capture_nonlocked_.split_rate));
+        capture_nonlocked_.split_rate,
+        config_.gain_controller1.analog_gain_controller.clipped_level_step,
+        config_.gain_controller1.analog_gain_controller.clipped_ratio_threshold,
+        config_.gain_controller1.analog_gain_controller.clipped_wait_frames));
     if (re_creation) {
       submodules_.agc_manager->set_stream_analog_level(stream_analog_level);
     }
