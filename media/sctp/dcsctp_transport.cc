@@ -98,7 +98,7 @@ class TextPcapPacketObserver : public dcsctp::PacketObserver {
                    dcsctp::TimeMs now,
                    rtc::ArrayView<const uint8_t> payload) {
     rtc::StringBuilder s;
-    s << prefix;
+    s << "\n" << prefix;
     int64_t remaining = *now % (24 * 60 * 60 * 1000);
     int hours = remaining / (60 * 60 * 1000);
     remaining = remaining % (60 * 60 * 1000);
@@ -366,7 +366,7 @@ uint32_t DcSctpTransport::GetRandomInt(uint32_t low, uint32_t high) {
   return random_.Rand(low, high);
 }
 
-void DcSctpTransport::NotifyOutgoingMessageBufferEmpty() {
+void DcSctpTransport::OnTotalBufferedAmountLow() {
   if (!ready_to_send_data_) {
     ready_to_send_data_ = true;
     SignalReadyToSendData();

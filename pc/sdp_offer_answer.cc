@@ -23,7 +23,6 @@
 #include "api/array_view.h"
 #include "api/crypto/crypto_options.h"
 #include "api/dtls_transport_interface.h"
-#include "api/media_stream_proxy.h"
 #include "api/rtp_parameters.h"
 #include "api/rtp_receiver_interface.h"
 #include "api/rtp_sender_interface.h"
@@ -41,6 +40,7 @@
 #include "pc/data_channel_utils.h"
 #include "pc/dtls_transport.h"
 #include "pc/media_stream.h"
+#include "pc/media_stream_proxy.h"
 #include "pc/peer_connection.h"
 #include "pc/peer_connection_message_handler.h"
 #include "pc/rtp_media_utils.h"
@@ -544,13 +544,17 @@ RTCError UpdateSimulcastLayerStatusInSender(
 }
 
 bool SimulcastIsRejected(const ContentInfo* local_content,
-                         const MediaContentDescription& answer_media_desc) {
+                         const MediaContentDescription& answer_media_desc,
+                         bool enable_encrypted_rtp_header_extensions) {
   bool simulcast_offered = local_content &&
                            local_content->media_description() &&
                            local_content->media_description()->HasSimulcast();
   bool simulcast_answered = answer_media_desc.HasSimulcast();
   bool rids_supported = RtpExtension::FindHeaderExtensionByUri(
-      answer_media_desc.rtp_header_extensions(), RtpExtension::kRidUri);
+      answer_media_desc.rtp_header_extensions(), RtpExtension::kRidUri,
+      enable_encrypted_rtp_header_extensions
+          ? RtpExtension::Filter::kPreferEncryptedExtension
+          : RtpExtension::Filter::kDiscardEncryptedExtension);
   return simulcast_offered && (!simulcast_answered || !rids_supported);
 }
 
@@ -3277,7 +3281,9 @@ SdpOfferAnswerHandler::AssociateTransceiver(
 
     // Check if the offer indicated simulcast but the answer rejected it.
     // This can happen when simulcast is not supported on the remote party.
-    if (SimulcastIsRejected(old_local_content, *media_desc)) {
+    if (SimulcastIsRejected(old_local_content, *media_desc,
+                            pc_->GetCryptoOptions()
+                                .srtp.enable_encrypted_rtp_header_extensions)) {
       RTC_HISTOGRAM_BOOLEAN(kSimulcastDisabled, true);
       RTCError error =
           DisableSimulcastInSender(transceiver->internal()->sender_internal());

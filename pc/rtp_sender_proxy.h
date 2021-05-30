@@ -14,8 +14,8 @@
 #include <string>
 #include <vector>
 
-#include "api/proxy.h"
 #include "api/rtp_sender_interface.h"
+#include "pc/proxy.h"
 
 namespace webrtc {
 
@@ -44,7 +44,7 @@ PROXY_METHOD1(void, SetStreams, const std::vector<std::string>&)
 PROXY_METHOD1(void,
               SetEncoderToPacketizerFrameTransformer,
               rtc::scoped_refptr<FrameTransformerInterface>)
-END_PROXY_MAP()
+END_PROXY_MAP(RtpSender)
 
 }  // namespace webrtc
 

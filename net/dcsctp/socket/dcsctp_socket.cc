@@ -167,7 +167,14 @@ DcSctpSocket::DcSctpSocket(absl::string_view log_prefix,
           TimerOptions(options.t2_shutdown_timeout,
                        TimerBackoffAlgorithm::kExponential,
                        options.max_retransmissions))),
-      send_queue_(log_prefix_, options_.max_send_buffer_size) {}
+      send_queue_(
+          log_prefix_,
+          options_.max_send_buffer_size,
+          [this](StreamID stream_id) {
+            callbacks_.OnBufferedAmountLow(stream_id);
+          },
+          options_.total_buffered_amount_low_threshold,
+          [this]() { callbacks_.OnTotalBufferedAmountLow(); }) {}
 
 std::string DcSctpSocket::log_prefix() const {
   return log_prefix_ + "[" + std::string(ToString(state_)) + "] ";
@@ -435,6 +442,19 @@ SocketState DcSctpSocket::state() const {
 
 void DcSctpSocket::SetMaxMessageSize(size_t max_message_size) {
   options_.max_message_size = max_message_size;
+}
+
+size_t DcSctpSocket::buffered_amount(StreamID stream_id) const {
+  return send_queue_.buffered_amount(stream_id);
+}
+
+size_t DcSctpSocket::buffered_amount_low_threshold(StreamID stream_id) const {
+  return send_queue_.buffered_amount_low_threshold(stream_id);
+}
+
+void DcSctpSocket::SetBufferedAmountLowThreshold(StreamID stream_id,
+                                                 size_t bytes) {
+  send_queue_.SetBufferedAmountLowThreshold(stream_id, bytes);
 }
 
 void DcSctpSocket::MaybeSendShutdownOnPacketReceived(const SctpPacket& packet) {
