@@ -51,17 +51,19 @@
 #include "media/engine/fake_webrtc_video_engine.h"
 #include "media/engine/simulcast.h"
 #include "media/engine/webrtc_voice_engine.h"
+#include "modules/rtp_rtcp/source/rtp_packet.h"
 #include "rtc_base/arraysize.h"
+#include "rtc_base/event.h"
 #include "rtc_base/experiments/min_video_bitrate_experiment.h"
 #include "rtc_base/fake_clock.h"
 #include "rtc_base/gunit.h"
 #include "rtc_base/numerics/safe_conversions.h"
 #include "rtc_base/time_utils.h"
+#include "system_wrappers/include/field_trial.h"
 #include "test/fake_decoder.h"
 #include "test/field_trial.h"
 #include "test/frame_forwarder.h"
 #include "test/gmock.h"
-#include "test/rtp_header_parser.h"
 
 using ::testing::_;
 using ::testing::Contains;
@@ -1659,20 +1661,13 @@ class WebRtcVideoChannelBaseTest : public ::testing::Test {
     return network_interface_.NumRtpPackets(ssrc);
   }
   int NumSentSsrcs() { return network_interface_.NumSentSsrcs(); }
-  const rtc::CopyOnWriteBuffer* GetRtpPacket(int index) {
+  rtc::CopyOnWriteBuffer GetRtpPacket(int index) {
     return network_interface_.GetRtpPacket(index);
   }
-  static int GetPayloadType(const rtc::CopyOnWriteBuffer* p) {
-    webrtc::RTPHeader header;
-    EXPECT_TRUE(ParseRtpPacket(p, &header));
-    return header.payloadType;
-  }
-
-  static bool ParseRtpPacket(const rtc::CopyOnWriteBuffer* p,
-                             webrtc::RTPHeader* header) {
-    std::unique_ptr<webrtc::RtpHeaderParser> parser(
-        webrtc::RtpHeaderParser::CreateForTest());
-    return parser->Parse(p->cdata(), p->size(), header);
+  static int GetPayloadType(rtc::CopyOnWriteBuffer p) {
+    webrtc::RtpPacket header;
+    EXPECT_TRUE(header.Parse(std::move(p)));
+    return header.PayloadType();
   }
 
   // Tests that we can send and receive frames.
@@ -1683,8 +1678,7 @@ class WebRtcVideoChannelBaseTest : public ::testing::Test {
     EXPECT_EQ(0, renderer_.num_rendered_frames());
     SendFrame();
     EXPECT_FRAME_WAIT(1, kVideoWidth, kVideoHeight, kTimeout);
-    std::unique_ptr<const rtc::CopyOnWriteBuffer> p(GetRtpPacket(0));
-    EXPECT_EQ(codec.id, GetPayloadType(p.get()));
+    EXPECT_EQ(codec.id, GetPayloadType(GetRtpPacket(0)));
   }
 
   void SendReceiveManyAndGetStats(const cricket::VideoCodec& codec,
@@ -1700,8 +1694,7 @@ class WebRtcVideoChannelBaseTest : public ::testing::Test {
         EXPECT_FRAME_WAIT(frame + i * fps, kVideoWidth, kVideoHeight, kTimeout);
       }
     }
-    std::unique_ptr<const rtc::CopyOnWriteBuffer> p(GetRtpPacket(0));
-    EXPECT_EQ(codec.id, GetPayloadType(p.get()));
+    EXPECT_EQ(codec.id, GetPayloadType(GetRtpPacket(0)));
   }
 
   cricket::VideoSenderInfo GetSenderStats(size_t i) {
@@ -1747,6 +1740,7 @@ class WebRtcVideoChannelBaseTest : public ::testing::Test {
 
   webrtc::RtcEventLogNull event_log_;
   webrtc::FieldTrialBasedConfig field_trials_;
+  std::unique_ptr<webrtc::test::ScopedFieldTrials> override_field_trials_;
   std::unique_ptr<webrtc::TaskQueueFactory> task_queue_factory_;
   std::unique_ptr<webrtc::Call> call_;
   std::unique_ptr<webrtc::VideoBitrateAllocatorFactory>
@@ -1801,8 +1795,10 @@ TEST_F(WebRtcVideoChannelBaseTest, OverridesRecvBufferSize) {
   // Set field trial to override the default recv buffer size, and then re-run
   // setup where the interface is created and configured.
   const int kCustomRecvBufferSize = 123456;
-  webrtc::test::ScopedFieldTrials field_trial(
+  RTC_DCHECK(!override_field_trials_);
+  override_field_trials_ = std::make_unique<webrtc::test::ScopedFieldTrials>(
       "WebRTC-IncreasedReceivebuffers/123456/");
+
   ResetTest();
 
   EXPECT_TRUE(SetOneCodec(DefaultCodec()));
@@ -1817,7 +1813,8 @@ TEST_F(WebRtcVideoChannelBaseTest, OverridesRecvBufferSizeWithSuffix) {
   // Set field trial to override the default recv buffer size, and then re-run
   // setup where the interface is created and configured.
   const int kCustomRecvBufferSize = 123456;
-  webrtc::test::ScopedFieldTrials field_trial(
+  RTC_DCHECK(!override_field_trials_);
+  override_field_trials_ = std::make_unique<webrtc::test::ScopedFieldTrials>(
       "WebRTC-IncreasedReceivebuffers/123456_Dogfood/");
   ResetTest();
 
@@ -1834,18 +1831,46 @@ TEST_F(WebRtcVideoChannelBaseTest, InvalidRecvBufferSize) {
   // then re-run setup where the interface is created and configured. The
   // default value should still be used.
 
+  const char* prev_field_trials = webrtc::field_trial::GetFieldTrialString();
+
+  std::string field_trial_string;
   for (std::string group : {" ", "NotANumber", "-1", "0"}) {
-    std::string field_trial_string = "WebRTC-IncreasedReceivebuffers/";
-    field_trial_string += group;
-    field_trial_string += "/";
-    webrtc::test::ScopedFieldTrials field_trial(field_trial_string);
-    ResetTest();
+    std::string trial_string = "WebRTC-IncreasedReceivebuffers/";
+    trial_string += group;
+    trial_string += "/";
+
+    // Dear reader. Sorry for this... it's a bit of a mess.
+    // TODO(bugs.webrtc.org/12854): This test needs to be rewritten to not use
+    // ResetTest and changing global field trials in a loop.
+    TearDown();
+    // This is a hack to appease tsan. Because of the way the test is written
+    // active state within Call, including running task queues may race with
+    // the test changing the global field trial variable.
+    // This particular hack, pauses the transport controller TQ while we
+    // change the field trial.
+    rtc::TaskQueue* tq = call_->GetTransportControllerSend()->GetWorkerQueue();
+    rtc::Event waiting, resume;
+    tq->PostTask([&waiting, &resume]() {
+      waiting.Set();
+      resume.Wait(rtc::Event::kForever);
+    });
+
+    waiting.Wait(rtc::Event::kForever);
+    field_trial_string = std::move(trial_string);
+    webrtc::field_trial::InitFieldTrialsFromString(field_trial_string.c_str());
+
+    SetUp();
+    resume.Set();
+
+    // OK, now the test can carry on.
 
     EXPECT_TRUE(SetOneCodec(DefaultCodec()));
     EXPECT_TRUE(SetSend(true));
     EXPECT_EQ(64 * 1024, network_interface_.sendbuf_size());
     EXPECT_EQ(256 * 1024, network_interface_.recvbuf_size());
   }
+
+  webrtc::field_trial::InitFieldTrialsFromString(prev_field_trials);
 }
 
 // Test that stats work properly for a 1-1 call.
@@ -2034,15 +2059,14 @@ TEST_F(WebRtcVideoChannelBaseTest, SetSendSsrc) {
   EXPECT_TRUE(SetSend(true));
   SendFrame();
   EXPECT_TRUE_WAIT(NumRtpPackets() > 0, kTimeout);
-  webrtc::RTPHeader header;
-  std::unique_ptr<const rtc::CopyOnWriteBuffer> p(GetRtpPacket(0));
-  EXPECT_TRUE(ParseRtpPacket(p.get(), &header));
-  EXPECT_EQ(kSsrc, header.ssrc);
+  webrtc::RtpPacket header;
+  EXPECT_TRUE(header.Parse(GetRtpPacket(0)));
+  EXPECT_EQ(kSsrc, header.Ssrc());
 
   // Packets are being paced out, so these can mismatch between the first and
   // second call to NumRtpPackets until pending packets are paced out.
-  EXPECT_EQ_WAIT(NumRtpPackets(), NumRtpPackets(header.ssrc), kTimeout);
-  EXPECT_EQ_WAIT(NumRtpBytes(), NumRtpBytes(header.ssrc), kTimeout);
+  EXPECT_EQ_WAIT(NumRtpPackets(), NumRtpPackets(header.Ssrc()), kTimeout);
+  EXPECT_EQ_WAIT(NumRtpBytes(), NumRtpBytes(header.Ssrc()), kTimeout);
   EXPECT_EQ(1, NumSentSsrcs());
   EXPECT_EQ(0, NumRtpPackets(kSsrc - 1));
   EXPECT_EQ(0, NumRtpBytes(kSsrc - 1));
@@ -2059,14 +2083,13 @@ TEST_F(WebRtcVideoChannelBaseTest, SetSendSsrcAfterSetCodecs) {
   EXPECT_TRUE(SetSend(true));
   EXPECT_TRUE(WaitAndSendFrame(0));
   EXPECT_TRUE_WAIT(NumRtpPackets() > 0, kTimeout);
-  webrtc::RTPHeader header;
-  std::unique_ptr<const rtc::CopyOnWriteBuffer> p(GetRtpPacket(0));
-  EXPECT_TRUE(ParseRtpPacket(p.get(), &header));
-  EXPECT_EQ(999u, header.ssrc);
+  webrtc::RtpPacket header;
+  EXPECT_TRUE(header.Parse(GetRtpPacket(0)));
+  EXPECT_EQ(999u, header.Ssrc());
   // Packets are being paced out, so these can mismatch between the first and
   // second call to NumRtpPackets until pending packets are paced out.
-  EXPECT_EQ_WAIT(NumRtpPackets(), NumRtpPackets(header.ssrc), kTimeout);
-  EXPECT_EQ_WAIT(NumRtpBytes(), NumRtpBytes(header.ssrc), kTimeout);
+  EXPECT_EQ_WAIT(NumRtpPackets(), NumRtpPackets(header.Ssrc()), kTimeout);
+  EXPECT_EQ_WAIT(NumRtpBytes(), NumRtpBytes(header.Ssrc()), kTimeout);
   EXPECT_EQ(1, NumSentSsrcs());
   EXPECT_EQ(0, NumRtpPackets(kSsrc));
   EXPECT_EQ(0, NumRtpBytes(kSsrc));
@@ -2098,12 +2121,10 @@ TEST_F(WebRtcVideoChannelBaseTest, AddRemoveSendStreams) {
   SendFrame();
   EXPECT_FRAME_WAIT(1, kVideoWidth, kVideoHeight, kTimeout);
   EXPECT_GT(NumRtpPackets(), 0);
-  webrtc::RTPHeader header;
+  webrtc::RtpPacket header;
   size_t last_packet = NumRtpPackets() - 1;
-  std::unique_ptr<const rtc::CopyOnWriteBuffer> p(
-      GetRtpPacket(static_cast<int>(last_packet)));
-  EXPECT_TRUE(ParseRtpPacket(p.get(), &header));
-  EXPECT_EQ(kSsrc, header.ssrc);
+  EXPECT_TRUE(header.Parse(GetRtpPacket(static_cast<int>(last_packet))));
+  EXPECT_EQ(kSsrc, header.Ssrc());
 
   // Remove the send stream that was added during Setup.
   EXPECT_TRUE(channel_->RemoveSendStream(kSsrc));
@@ -2118,9 +2139,8 @@ TEST_F(WebRtcVideoChannelBaseTest, AddRemoveSendStreams) {
   EXPECT_TRUE_WAIT(NumRtpPackets() > rtp_packets, kTimeout);
 
   last_packet = NumRtpPackets() - 1;
-  p.reset(GetRtpPacket(static_cast<int>(last_packet)));
-  EXPECT_TRUE(ParseRtpPacket(p.get(), &header));
-  EXPECT_EQ(789u, header.ssrc);
+  EXPECT_TRUE(header.Parse(GetRtpPacket(static_cast<int>(last_packet))));
+  EXPECT_EQ(789u, header.Ssrc());
 }
 
 // Tests the behavior of incoming streams in a conference scenario.
@@ -2148,8 +2168,7 @@ TEST_F(WebRtcVideoChannelBaseTest, SimulateConference) {
   EXPECT_FRAME_ON_RENDERER_WAIT(renderer2, 1, kVideoWidth, kVideoHeight,
                                 kTimeout);
 
-  std::unique_ptr<const rtc::CopyOnWriteBuffer> p(GetRtpPacket(0));
-  EXPECT_EQ(DefaultCodec().id, GetPayloadType(p.get()));
+  EXPECT_EQ(DefaultCodec().id, GetPayloadType(GetRtpPacket(0)));
   EXPECT_EQ(kVideoWidth, renderer1.width());
   EXPECT_EQ(kVideoHeight, renderer1.height());
   EXPECT_EQ(kVideoWidth, renderer2.width());
@@ -2955,7 +2974,7 @@ TEST_F(WebRtcVideoChannelTest, RecvAbsoluteSendTimeHeaderExtensions) {
 }
 
 TEST_F(WebRtcVideoChannelTest, FiltersExtensionsPicksTransportSeqNum) {
-  webrtc::test::ScopedFieldTrials override_field_trials_(
+  webrtc::test::ScopedFieldTrials override_field_trials(
       "WebRTC-FilterAbsSendTimeExtension/Enabled/");
   // Enable three redundant extensions.
   std::vector<std::string> extensions;

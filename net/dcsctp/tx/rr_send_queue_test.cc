@@ -666,5 +666,77 @@ TEST_F(RRSendQueueTest, TriggersOnTotalBufferedAmountLowWhenCrossing) {
   absl::optional<SendQueue::DataToSend> chunk_two =
       buf_.Produce(kNow, kOneFragmentPacketSize);
 }
+
+TEST_F(RRSendQueueTest, WillStayInAStreamAsLongAsThatMessageIsSending) {
+  buf_.Add(kNow, DcSctpMessage(StreamID(5), kPPID, std::vector<uint8_t>(1)));
+
+  ASSERT_HAS_VALUE_AND_ASSIGN(SendQueue::DataToSend chunk1,
+                              buf_.Produce(kNow, kOneFragmentPacketSize));
+  EXPECT_EQ(chunk1.data.stream_id, StreamID(5));
+  EXPECT_THAT(chunk1.data.payload, SizeIs(1));
+
+  // Next, it should pick a different stream.
+
+  buf_.Add(kNow,
+           DcSctpMessage(StreamID(1), kPPID,
+                         std::vector<uint8_t>(kOneFragmentPacketSize * 2)));
+
+  ASSERT_HAS_VALUE_AND_ASSIGN(SendQueue::DataToSend chunk2,
+                              buf_.Produce(kNow, kOneFragmentPacketSize));
+  EXPECT_EQ(chunk2.data.stream_id, StreamID(1));
+  EXPECT_THAT(chunk2.data.payload, SizeIs(kOneFragmentPacketSize));
+
+  // It should still stay on the Stream1 now, even if might be tempted to switch
+  // to this stream, as it's the stream following 5.
+  buf_.Add(kNow, DcSctpMessage(StreamID(6), kPPID, std::vector<uint8_t>(1)));
+
+  ASSERT_HAS_VALUE_AND_ASSIGN(SendQueue::DataToSend chunk3,
+                              buf_.Produce(kNow, kOneFragmentPacketSize));
+  EXPECT_EQ(chunk3.data.stream_id, StreamID(1));
+  EXPECT_THAT(chunk3.data.payload, SizeIs(kOneFragmentPacketSize));
+
+  // After stream id 1 is complete, it's time to do stream 6.
+  ASSERT_HAS_VALUE_AND_ASSIGN(SendQueue::DataToSend chunk4,
+                              buf_.Produce(kNow, kOneFragmentPacketSize));
+  EXPECT_EQ(chunk4.data.stream_id, StreamID(6));
+  EXPECT_THAT(chunk4.data.payload, SizeIs(1));
+
+  EXPECT_FALSE(buf_.Produce(kNow, kOneFragmentPacketSize).has_value());
+}
+
+TEST_F(RRSendQueueTest, WillStayInStreamWhenOnlySmallFragmentRemaining) {
+  buf_.Add(kNow,
+           DcSctpMessage(StreamID(5), kPPID,
+                         std::vector<uint8_t>(kOneFragmentPacketSize * 2)));
+  buf_.Add(kNow, DcSctpMessage(StreamID(6), kPPID, std::vector<uint8_t>(1)));
+
+  ASSERT_HAS_VALUE_AND_ASSIGN(SendQueue::DataToSend chunk1,
+                              buf_.Produce(kNow, kOneFragmentPacketSize));
+  EXPECT_EQ(chunk1.data.stream_id, StreamID(5));
+  EXPECT_THAT(chunk1.data.payload, SizeIs(kOneFragmentPacketSize));
+
+  // Now assume that there will be a lot of previous chunks that need to be
+  // retransmitted, which fills up the next packet and there is little space
+  // left in the packet for new chunks. What it should NOT do right now is to
+  // try to send a message from StreamID 6. And it should not try to send a very
+  // small fragment from StreamID 5 either. So just skip this one.
+  EXPECT_FALSE(buf_.Produce(kNow, 8).has_value());
+
+  // When the next produce request comes with a large buffer to fill, continue
+  // sending from StreamID 5.
+
+  ASSERT_HAS_VALUE_AND_ASSIGN(SendQueue::DataToSend chunk2,
+                              buf_.Produce(kNow, kOneFragmentPacketSize));
+  EXPECT_EQ(chunk2.data.stream_id, StreamID(5));
+  EXPECT_THAT(chunk2.data.payload, SizeIs(kOneFragmentPacketSize));
+
+  // Lastly, produce a message on StreamID 6.
+  ASSERT_HAS_VALUE_AND_ASSIGN(SendQueue::DataToSend chunk3,
+                              buf_.Produce(kNow, kOneFragmentPacketSize));
+  EXPECT_EQ(chunk3.data.stream_id, StreamID(6));
+  EXPECT_THAT(chunk3.data.payload, SizeIs(1));
+
+  EXPECT_FALSE(buf_.Produce(kNow, 8).has_value());
+}
 }  // namespace
 }  // namespace dcsctp
