@@ -246,6 +246,22 @@ void AudioReceiveStream::SetUseTransportCcAndNackHistory(bool use_transport_cc,
   }
 }
 
+void AudioReceiveStream::SetFrameDecryptor(
+    rtc::scoped_refptr<webrtc::FrameDecryptorInterface> frame_decryptor) {
+  // TODO(bugs.webrtc.org/11993): This is called via WebRtcAudioReceiveStream,
+  // expect to be called on the network thread.
+  RTC_DCHECK_RUN_ON(&worker_thread_checker_);
+  channel_receive_->SetFrameDecryptor(std::move(frame_decryptor));
+}
+
+void AudioReceiveStream::SetRtpExtensions(
+    std::vector<RtpExtension> extensions) {
+  // TODO(bugs.webrtc.org/11993): This is called via WebRtcAudioReceiveStream,
+  // expect to be called on the network thread.
+  RTC_DCHECK_RUN_ON(&worker_thread_checker_);
+  config_.rtp.extensions = std::move(extensions);
+}
+
 webrtc::AudioReceiveStream::Stats AudioReceiveStream::GetStats(
     bool get_and_clear_legacy_stats) const {
   RTC_DCHECK_RUN_ON(&worker_thread_checker_);
@@ -427,6 +443,24 @@ void AudioReceiveStream::DeliverRtcp(const uint8_t* packet, size_t length) {
   // thread. Then this check can be enabled.
   // RTC_DCHECK(!thread_checker_.IsCurrent());
   channel_receive_->ReceivedRTCPPacket(packet, length);
+}
+
+void AudioReceiveStream::SetSyncGroup(const std::string& sync_group) {
+  RTC_DCHECK_RUN_ON(&packet_sequence_checker_);
+  config_.sync_group = sync_group;
+}
+
+void AudioReceiveStream::SetLocalSsrc(uint32_t local_ssrc) {
+  RTC_DCHECK_RUN_ON(&packet_sequence_checker_);
+  // TODO(tommi): Consider storing local_ssrc in one place.
+  config_.rtp.local_ssrc = local_ssrc;
+  channel_receive_->OnLocalSsrcChange(local_ssrc);
+}
+
+uint32_t AudioReceiveStream::local_ssrc() const {
+  RTC_DCHECK_RUN_ON(&packet_sequence_checker_);
+  RTC_DCHECK_EQ(config_.rtp.local_ssrc, channel_receive_->GetLocalSsrc());
+  return config_.rtp.local_ssrc;
 }
 
 const webrtc::AudioReceiveStream::Config& AudioReceiveStream::config() const {

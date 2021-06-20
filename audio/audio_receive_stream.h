@@ -13,6 +13,7 @@
 
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "api/audio/audio_mixer.h"
@@ -84,6 +85,7 @@ class AudioReceiveStream final : public webrtc::AudioReceiveStream,
   // webrtc::AudioReceiveStream implementation.
   void Start() override;
   void Stop() override;
+  const RtpConfig& rtp_config() const override { return config_.rtp; }
   bool IsRunning() const override;
   void SetDepacketizerToDecoderFrameTransformer(
       rtc::scoped_refptr<webrtc::FrameTransformerInterface> frame_transformer)
@@ -91,6 +93,9 @@ class AudioReceiveStream final : public webrtc::AudioReceiveStream,
   void SetDecoderMap(std::map<int, SdpAudioFormat> decoder_map) override;
   void SetUseTransportCcAndNackHistory(bool use_transport_cc,
                                        int history_ms) override;
+  void SetFrameDecryptor(rtc::scoped_refptr<webrtc::FrameDecryptorInterface>
+                             frame_decryptor) override;
+  void SetRtpExtensions(std::vector<RtpExtension> extensions) override;
 
   webrtc::AudioReceiveStream::Stats GetStats(
       bool get_and_clear_legacy_stats) const override;
@@ -118,11 +123,11 @@ class AudioReceiveStream final : public webrtc::AudioReceiveStream,
   void AssociateSendStream(AudioSendStream* send_stream);
   void DeliverRtcp(const uint8_t* packet, size_t length);
 
-  uint32_t local_ssrc() const {
-    // The local_ssrc member variable of config_ will never change and can be
-    // considered const.
-    return config_.rtp.local_ssrc;
-  }
+  void SetSyncGroup(const std::string& sync_group);
+
+  void SetLocalSsrc(uint32_t local_ssrc);
+
+  uint32_t local_ssrc() const;
 
   uint32_t remote_ssrc() const {
     // The remote_ssrc member variable of config_ will never change and can be

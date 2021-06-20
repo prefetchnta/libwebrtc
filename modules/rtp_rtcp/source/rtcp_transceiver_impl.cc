@@ -92,9 +92,7 @@ RtcpTransceiverImpl::RtcpTransceiverImpl(const RtcpTransceiverConfig& config)
     : config_(config), ready_to_send_(config.initial_ready_to_send) {
   RTC_CHECK(config_.Validate());
   if (ready_to_send_ && config_.schedule_periodic_compound_packets) {
-    config_.task_queue->PostTask(ToQueuedTask([this] {
-      SchedulePeriodicCompoundPackets(config_.initial_report_delay_ms);
-    }));
+    SchedulePeriodicCompoundPackets(config_.initial_report_delay_ms);
   }
 }
 
@@ -355,9 +353,12 @@ void RtcpTransceiverImpl::CreateCompoundPacket(PacketSender* sender) {
   rtcp::ReceiverReport receiver_report;
   receiver_report.SetSenderSsrc(sender_ssrc);
   receiver_report.SetReportBlocks(CreateReportBlocks(now));
-  sender->AppendPacket(receiver_report);
+  if (config_.rtcp_mode == RtcpMode::kCompound ||
+      !receiver_report.report_blocks().empty()) {
+    sender->AppendPacket(receiver_report);
+  }
 
-  if (!config_.cname.empty()) {
+  if (!config_.cname.empty() && !sender->IsEmpty()) {
     rtcp::Sdes sdes;
     bool added = sdes.AddCName(config_.feedback_ssrc, config_.cname);
     RTC_DCHECK(added) << "Failed to add cname " << config_.cname

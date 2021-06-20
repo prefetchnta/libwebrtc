@@ -38,6 +38,7 @@ namespace {
 
 using ::testing::_;
 using ::testing::ElementsAre;
+using ::testing::NiceMock;
 using ::testing::Return;
 using ::testing::SizeIs;
 using ::testing::StrictMock;
@@ -163,6 +164,25 @@ TEST(RtcpTransceiverImplTest, NeedToStopPeriodicTaskToDestroyOnTaskQueue) {
   queue.PostTask([rtcp_transceiver, &done] {
     rtcp_transceiver->StopPeriodicTask();
     delete rtcp_transceiver;
+    done.Set();
+  });
+  ASSERT_TRUE(done.Wait(/*milliseconds=*/1000));
+}
+
+TEST(RtcpTransceiverImplTest, CanBeDestroyedRightAfterCreation) {
+  SimulatedClock clock(0);
+  FakeRtcpTransport transport;
+  TaskQueueForTest queue("rtcp");
+  RtcpTransceiverConfig config = DefaultTestConfig();
+  config.clock = &clock;
+  config.task_queue = queue.Get();
+  config.schedule_periodic_compound_packets = true;
+  config.outgoing_transport = &transport;
+
+  rtc::Event done;
+  queue.PostTask([&] {
+    RtcpTransceiverImpl rtcp_transceiver(config);
+    rtcp_transceiver.StopPeriodicTask();
     done.Set();
   });
   ASSERT_TRUE(done.Wait(/*milliseconds=*/1000));
@@ -390,6 +410,47 @@ TEST(RtcpTransceiverImplTest, SendsMinimalCompoundPacket) {
   ASSERT_EQ(rtcp_parser.sdes()->chunks().size(), 1u);
   EXPECT_EQ(rtcp_parser.sdes()->chunks()[0].ssrc, kSenderSsrc);
   EXPECT_EQ(rtcp_parser.sdes()->chunks()[0].cname, config.cname);
+}
+
+TEST(RtcpTransceiverImplTest, AvoidsEmptyPacketsInReducedMode) {
+  MockTransport transport;
+  EXPECT_CALL(transport, SendRtcp).Times(0);
+  NiceMock<MockReceiveStatisticsProvider> receive_statistics;
+  SimulatedClock clock(0);
+
+  RtcpTransceiverConfig config = DefaultTestConfig();
+  config.clock = &clock;
+  config.outgoing_transport = &transport;
+  config.rtcp_mode = webrtc::RtcpMode::kReducedSize;
+  config.schedule_periodic_compound_packets = false;
+  config.receive_statistics = &receive_statistics;
+  RtcpTransceiverImpl rtcp_transceiver(config);
+
+  rtcp_transceiver.SendCompoundPacket();
+}
+
+TEST(RtcpTransceiverImplTest, AvoidsEmptyReceiverReportsInReducedMode) {
+  RtcpPacketParser rtcp_parser;
+  RtcpParserTransport transport(&rtcp_parser);
+  NiceMock<MockReceiveStatisticsProvider> receive_statistics;
+  SimulatedClock clock(0);
+
+  RtcpTransceiverConfig config = DefaultTestConfig();
+  config.clock = &clock;
+  config.outgoing_transport = &transport;
+  config.rtcp_mode = webrtc::RtcpMode::kReducedSize;
+  config.schedule_periodic_compound_packets = false;
+  config.receive_statistics = &receive_statistics;
+  // Set it to produce something (RRTR) in the "periodic" rtcp packets.
+  config.non_sender_rtt_measurement = true;
+  RtcpTransceiverImpl rtcp_transceiver(config);
+
+  // Rather than waiting for the right time to produce the periodic packet,
+  // trigger it manually.
+  rtcp_transceiver.SendCompoundPacket();
+
+  EXPECT_EQ(rtcp_parser.receiver_report()->num_packets(), 0);
+  EXPECT_GT(rtcp_parser.xr()->num_packets(), 0);
 }
 
 TEST(RtcpTransceiverImplTest, SendsNoRembInitially) {

@@ -113,6 +113,16 @@ void FakeAudioReceiveStream::SetUseTransportCcAndNackHistory(
   config_.rtp.nack.rtp_history_ms = history_ms;
 }
 
+void FakeAudioReceiveStream::SetFrameDecryptor(
+    rtc::scoped_refptr<webrtc::FrameDecryptorInterface> frame_decryptor) {
+  config_.frame_decryptor = std::move(frame_decryptor);
+}
+
+void FakeAudioReceiveStream::SetRtpExtensions(
+    std::vector<webrtc::RtpExtension> extensions) {
+  config_.rtp.extensions = std::move(extensions);
+}
+
 webrtc::AudioReceiveStream::Stats FakeAudioReceiveStream::GetStats(
     bool get_and_clear_legacy_stats) const {
   return stats_;
@@ -657,6 +667,18 @@ void FakeCall::SignalChannelNetworkState(webrtc::MediaType media,
 
 void FakeCall::OnAudioTransportOverheadChanged(
     int transport_overhead_per_packet) {}
+
+void FakeCall::OnLocalSsrcUpdated(webrtc::AudioReceiveStream& stream,
+                                  uint32_t local_ssrc) {
+  auto& fake_stream = static_cast<FakeAudioReceiveStream&>(stream);
+  fake_stream.SetLocalSsrc(local_ssrc);
+}
+
+void FakeCall::OnUpdateSyncGroup(webrtc::AudioReceiveStream& stream,
+                                 const std::string& sync_group) {
+  auto& fake_stream = static_cast<FakeAudioReceiveStream&>(stream);
+  fake_stream.SetSyncGroup(sync_group);
+}
 
 void FakeCall::OnSentPacket(const rtc::SentPacket& sent_packet) {
   last_sent_packet_ = sent_packet;

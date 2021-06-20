@@ -11,14 +11,19 @@
 #ifndef PC_JSEP_TRANSPORT_COLLECTION_H_
 #define PC_JSEP_TRANSPORT_COLLECTION_H_
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "api/sequence_checker.h"
 #include "pc/jsep_transport.h"
 #include "pc/session_description.h"
+#include "rtc_base/checks.h"
+#include "rtc_base/system/no_unique_address.h"
+#include "rtc_base/thread_annotations.h"
 
 namespace webrtc {
 
@@ -45,6 +50,12 @@ class BundleManager {
     RTC_DCHECK_RUN_ON(&sequence_checker_);
     return bundle_groups_;
   }
+  // Lookup a bundle group by a member mid name.
+  const cricket::ContentGroup* LookupGroupByMid(const std::string& mid) const;
+  cricket::ContentGroup* LookupGroupByMid(const std::string& mid);
+  // Returns true if the MID is the first item of a group, or if
+  // the MID is not a member of a group.
+  bool IsFirstMidInGroup(const std::string& mid) const;
   // Update the groups description. This completely replaces the group
   // description with the one from the SessionDescription.
   void Update(const cricket::SessionDescription* description);
@@ -58,6 +69,8 @@ class BundleManager {
   RTC_NO_UNIQUE_ADDRESS SequenceChecker sequence_checker_;
   std::vector<std::unique_ptr<cricket::ContentGroup>> bundle_groups_
       RTC_GUARDED_BY(sequence_checker_);
+  std::map<std::string, cricket::ContentGroup*>
+      established_bundle_groups_by_mid_;
 };
 
 // This class keeps the mapping of MIDs to transports.
