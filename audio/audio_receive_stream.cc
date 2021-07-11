@@ -70,7 +70,6 @@ namespace {
 std::unique_ptr<voe::ChannelReceiveInterface> CreateChannelReceive(
     Clock* clock,
     webrtc::AudioState* audio_state,
-    ProcessThread* module_process_thread,
     NetEqFactory* neteq_factory,
     const webrtc::AudioReceiveStream::Config& config,
     RtcEventLog* event_log) {
@@ -78,11 +77,10 @@ std::unique_ptr<voe::ChannelReceiveInterface> CreateChannelReceive(
   internal::AudioState* internal_audio_state =
       static_cast<internal::AudioState*>(audio_state);
   return voe::CreateChannelReceive(
-      clock, module_process_thread, neteq_factory,
-      internal_audio_state->audio_device_module(), config.rtcp_send_transport,
-      event_log, config.rtp.local_ssrc, config.rtp.remote_ssrc,
-      config.jitter_buffer_max_packets, config.jitter_buffer_fast_accelerate,
-      config.jitter_buffer_min_delay_ms,
+      clock, neteq_factory, internal_audio_state->audio_device_module(),
+      config.rtcp_send_transport, event_log, config.rtp.local_ssrc,
+      config.rtp.remote_ssrc, config.jitter_buffer_max_packets,
+      config.jitter_buffer_fast_accelerate, config.jitter_buffer_min_delay_ms,
       config.jitter_buffer_enable_rtx_handling, config.decoder_factory,
       config.codec_pair_id, std::move(config.frame_decryptor),
       config.crypto_options, std::move(config.frame_transformer));
@@ -92,7 +90,6 @@ std::unique_ptr<voe::ChannelReceiveInterface> CreateChannelReceive(
 AudioReceiveStream::AudioReceiveStream(
     Clock* clock,
     PacketRouter* packet_router,
-    ProcessThread* module_process_thread,
     NetEqFactory* neteq_factory,
     const webrtc::AudioReceiveStream::Config& config,
     const rtc::scoped_refptr<webrtc::AudioState>& audio_state,
@@ -104,7 +101,6 @@ AudioReceiveStream::AudioReceiveStream(
                          event_log,
                          CreateChannelReceive(clock,
                                               audio_state.get(),
-                                              module_process_thread,
                                               neteq_factory,
                                               config,
                                               event_log)) {}
@@ -282,6 +278,7 @@ webrtc::AudioReceiveStream::Stats AudioReceiveStream::GetStats(
       call_stats.header_and_padding_bytes_rcvd;
   stats.packets_rcvd = call_stats.packetsReceived;
   stats.packets_lost = call_stats.cumulativeLost;
+  stats.nacks_sent = call_stats.nacks_sent;
   stats.capture_start_ntp_time_ms = call_stats.capture_start_ntp_time_ms_;
   stats.last_packet_received_timestamp_ms =
       call_stats.last_packet_received_timestamp_ms;

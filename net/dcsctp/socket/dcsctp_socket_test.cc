@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "absl/flags/flag.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
@@ -40,12 +41,15 @@
 #include "net/dcsctp/public/dcsctp_message.h"
 #include "net/dcsctp/public/dcsctp_options.h"
 #include "net/dcsctp/public/dcsctp_socket.h"
+#include "net/dcsctp/public/text_pcap_packet_observer.h"
 #include "net/dcsctp/public/types.h"
 #include "net/dcsctp/rx/reassembly_queue.h"
 #include "net/dcsctp/socket/mock_dcsctp_socket_callbacks.h"
 #include "net/dcsctp/testing/testing_macros.h"
 #include "rtc_base/gunit.h"
 #include "test/gmock.h"
+
+ABSL_FLAG(bool, dcsctp_capture_packets, false, "Print packet capture.");
 
 namespace dcsctp {
 namespace {
@@ -59,6 +63,33 @@ using ::testing::SizeIs;
 constexpr SendOptions kSendOptions;
 constexpr size_t kLargeMessageSize = DcSctpOptions::kMaxSafeMTUSize * 20;
 static constexpr size_t kSmallMessageSize = 10;
+
+MATCHER_P(HasDataChunkWithStreamId, stream_id, "") {
+  absl::optional<SctpPacket> packet = SctpPacket::Parse(arg);
+  if (!packet.has_value()) {
+    *result_listener << "data didn't parse as an SctpPacket";
+    return false;
+  }
+
+  if (packet->descriptors()[0].type != DataChunk::kType) {
+    *result_listener << "the first chunk in the packet is not a data chunk";
+    return false;
+  }
+
+  absl::optional<DataChunk> dc =
+      DataChunk::Parse(packet->descriptors()[0].data);
+  if (!dc.has_value()) {
+    *result_listener << "The first chunk didn't parse as a data chunk";
+    return false;
+  }
+
+  if (dc->stream_id() != stream_id) {
+    *result_listener << "the stream_id is " << *dc->stream_id();
+    return false;
+  }
+
+  return true;
+}
 
 MATCHER_P(HasDataChunkWithSsn, ssn, "") {
   absl::optional<SctpPacket> packet = SctpPacket::Parse(arg);
@@ -180,14 +211,21 @@ DcSctpOptions MakeOptionsForTest(bool enable_message_interleaving) {
   return options;
 }
 
+std::unique_ptr<PacketObserver> GetPacketObserver(absl::string_view name) {
+  if (absl::GetFlag(FLAGS_dcsctp_capture_packets)) {
+    return std::make_unique<TextPcapPacketObserver>(name);
+  }
+  return nullptr;
+}
+
 class DcSctpSocketTest : public testing::Test {
  protected:
   explicit DcSctpSocketTest(bool enable_message_interleaving = false)
       : options_(MakeOptionsForTest(enable_message_interleaving)),
         cb_a_("A"),
         cb_z_("Z"),
-        sock_a_("A", cb_a_, nullptr, options_),
-        sock_z_("Z", cb_z_, nullptr, options_) {}
+        sock_a_("A", cb_a_, GetPacketObserver("A"), options_),
+        sock_z_("Z", cb_z_, GetPacketObserver("Z"), options_) {}
 
   void AdvanceTime(DurationMs duration) {
     cb_a_.AdvanceTime(duration);
@@ -883,6 +921,84 @@ TEST_F(DcSctpSocketTest, ResetStreamWillMakeChunksStartAtZeroSsn) {
   auto packet4 = cb_a_.ConsumeSentPacket();
   EXPECT_THAT(packet4, HasDataChunkWithSsn(SSN(1)));
   sock_z_.ReceivePacket(packet4);
+
+  // Handle SACK
+  sock_a_.ReceivePacket(cb_z_.ConsumeSentPacket());
+}
+
+TEST_F(DcSctpSocketTest, ResetStreamWillOnlyResetTheRequestedStreams) {
+  ConnectSockets();
+
+  std::vector<uint8_t> payload(options_.mtu - 100);
+
+  // Send two ordered messages on SID 1
+  sock_a_.Send(DcSctpMessage(StreamID(1), PPID(53), payload), {});
+  sock_a_.Send(DcSctpMessage(StreamID(1), PPID(53), payload), {});
+
+  auto packet1 = cb_a_.ConsumeSentPacket();
+  EXPECT_THAT(packet1, HasDataChunkWithStreamId(StreamID(1)));
+  EXPECT_THAT(packet1, HasDataChunkWithSsn(SSN(0)));
+  sock_z_.ReceivePacket(packet1);
+
+  auto packet2 = cb_a_.ConsumeSentPacket();
+  EXPECT_THAT(packet1, HasDataChunkWithStreamId(StreamID(1)));
+  EXPECT_THAT(packet2, HasDataChunkWithSsn(SSN(1)));
+  sock_z_.ReceivePacket(packet2);
+
+  // Handle SACK
+  sock_a_.ReceivePacket(cb_z_.ConsumeSentPacket());
+
+  // Do the same, for SID 3
+  sock_a_.Send(DcSctpMessage(StreamID(3), PPID(53), payload), {});
+  sock_a_.Send(DcSctpMessage(StreamID(3), PPID(53), payload), {});
+  auto packet3 = cb_a_.ConsumeSentPacket();
+  EXPECT_THAT(packet3, HasDataChunkWithStreamId(StreamID(3)));
+  EXPECT_THAT(packet3, HasDataChunkWithSsn(SSN(0)));
+  sock_z_.ReceivePacket(packet3);
+  auto packet4 = cb_a_.ConsumeSentPacket();
+  EXPECT_THAT(packet4, HasDataChunkWithStreamId(StreamID(3)));
+  EXPECT_THAT(packet4, HasDataChunkWithSsn(SSN(1)));
+  sock_z_.ReceivePacket(packet4);
+  sock_a_.ReceivePacket(cb_z_.ConsumeSentPacket());
+
+  // Receive all messages.
+  absl::optional<DcSctpMessage> msg1 = cb_z_.ConsumeReceivedMessage();
+  ASSERT_TRUE(msg1.has_value());
+  EXPECT_EQ(msg1->stream_id(), StreamID(1));
+
+  absl::optional<DcSctpMessage> msg2 = cb_z_.ConsumeReceivedMessage();
+  ASSERT_TRUE(msg2.has_value());
+  EXPECT_EQ(msg2->stream_id(), StreamID(1));
+
+  absl::optional<DcSctpMessage> msg3 = cb_z_.ConsumeReceivedMessage();
+  ASSERT_TRUE(msg3.has_value());
+  EXPECT_EQ(msg3->stream_id(), StreamID(3));
+
+  absl::optional<DcSctpMessage> msg4 = cb_z_.ConsumeReceivedMessage();
+  ASSERT_TRUE(msg4.has_value());
+  EXPECT_EQ(msg4->stream_id(), StreamID(3));
+
+  // Reset SID 1. This will directly send a RE-CONFIG.
+  sock_a_.ResetStreams(std::vector<StreamID>({StreamID(3)}));
+  // RE-CONFIG, req
+  sock_z_.ReceivePacket(cb_a_.ConsumeSentPacket());
+  // RE-CONFIG, resp
+  sock_a_.ReceivePacket(cb_z_.ConsumeSentPacket());
+
+  // Send a message on SID 1 and 3 - SID 1 should not be reset, but 3 should.
+  sock_a_.Send(DcSctpMessage(StreamID(1), PPID(53), payload), {});
+
+  sock_a_.Send(DcSctpMessage(StreamID(3), PPID(53), payload), {});
+
+  auto packet5 = cb_a_.ConsumeSentPacket();
+  EXPECT_THAT(packet5, HasDataChunkWithStreamId(StreamID(1)));
+  EXPECT_THAT(packet5, HasDataChunkWithSsn(SSN(2)));  // Unchanged.
+  sock_z_.ReceivePacket(packet5);
+
+  auto packet6 = cb_a_.ConsumeSentPacket();
+  EXPECT_THAT(packet6, HasDataChunkWithStreamId(StreamID(3)));
+  EXPECT_THAT(packet6, HasDataChunkWithSsn(SSN(0)));  // Reset.
+  sock_z_.ReceivePacket(packet6);
 
   // Handle SACK
   sock_a_.ReceivePacket(cb_z_.ConsumeSentPacket());

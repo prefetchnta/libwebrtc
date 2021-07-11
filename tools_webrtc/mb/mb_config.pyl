@@ -20,8 +20,6 @@
   'builder_groups': {
     'client.webrtc': {
       # iOS
-      'iOS32 Debug': 'ios_debug_bot_arm',
-      'iOS32 Release': 'ios_release_bot_arm',
       'iOS64 Debug': 'ios_debug_bot_arm64',
       'iOS64 Release': 'ios_release_bot_arm64',
       'iOS64 Sim Debug (iOS 12)': 'ios_debug_bot_x64',
@@ -112,6 +110,7 @@
       'Perf Android64 (M Nexus5X)': 'release_bot_x64',
       'Perf Android64 (O Pixel2)': 'release_bot_x64',
       'Perf Linux Trusty': 'release_bot_x64',
+      'Perf Linux Bionic': 'release_bot_x64',
       'Perf Mac 10.11': 'release_bot_x64',
       'Perf Win7': 'release_bot_x64',
     },
@@ -148,8 +147,6 @@
     },
     'tryserver.webrtc': {
       # iOS
-      'ios_compile_arm_dbg': 'ios_debug_bot_arm',
-      'ios_compile_arm_rel': 'ios_release_bot_arm',
       'ios_compile_arm64_dbg': 'ios_debug_bot_arm64',
       'ios_compile_arm64_rel': 'ios_release_bot_arm64',
       'ios_sim_x64_dbg_ios12': 'ios_debug_bot_x64',
@@ -381,14 +378,6 @@
     ],
 
     # iOS
-    'ios_debug_bot_arm': [
-      'ios', 'debug_bot', 'arm', 'no_ios_code_signing', 'ios_use_goma_rbe',
-      'xctest',
-    ],
-    'ios_release_bot_arm': [
-      'ios', 'release_bot', 'arm', 'no_ios_code_signing', 'ios_use_goma_rbe',
-      'xctest',
-    ],
     'ios_debug_bot_arm64': [
       'ios', 'debug_bot', 'arm64', 'no_ios_code_signing', 'ios_use_goma_rbe',
       'xctest',

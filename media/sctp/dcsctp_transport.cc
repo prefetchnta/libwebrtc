@@ -21,6 +21,7 @@
 #include "media/base/media_channel.h"
 #include "net/dcsctp/public/dcsctp_socket_factory.h"
 #include "net/dcsctp/public/packet_observer.h"
+#include "net/dcsctp/public/text_pcap_packet_observer.h"
 #include "net/dcsctp/public/types.h"
 #include "p2p/base/packet_transport_internal.h"
 #include "rtc_base/checks.h"
@@ -73,51 +74,33 @@ absl::optional<DataMessageType> ToDataMessageType(dcsctp::PPID ppid) {
   return absl::nullopt;
 }
 
+absl::optional<cricket::SctpErrorCauseCode> ToErrorCauseCode(
+    dcsctp::ErrorKind error) {
+  switch (error) {
+    case dcsctp::ErrorKind::kParseFailed:
+      return cricket::SctpErrorCauseCode::kUnrecognizedParameters;
+    case dcsctp::ErrorKind::kPeerReported:
+      return cricket::SctpErrorCauseCode::kUserInitiatedAbort;
+    case dcsctp::ErrorKind::kWrongSequence:
+    case dcsctp::ErrorKind::kProtocolViolation:
+      return cricket::SctpErrorCauseCode::kProtocolViolation;
+    case dcsctp::ErrorKind::kResourceExhaustion:
+      return cricket::SctpErrorCauseCode::kOutOfResource;
+    case dcsctp::ErrorKind::kTooManyRetries:
+    case dcsctp::ErrorKind::kUnsupportedOperation:
+    case dcsctp::ErrorKind::kNoError:
+    case dcsctp::ErrorKind::kNotConnected:
+      // No SCTP error cause code matches those
+      break;
+  }
+  return absl::nullopt;
+}
+
 bool IsEmptyPPID(dcsctp::PPID ppid) {
   WebrtcPPID webrtc_ppid = static_cast<WebrtcPPID>(ppid.value());
   return webrtc_ppid == WebrtcPPID::kStringEmpty ||
          webrtc_ppid == WebrtcPPID::kBinaryEmpty;
 }
-
-// Print outs all sent and received packets to the logs, at LS_VERBOSE severity.
-class TextPcapPacketObserver : public dcsctp::PacketObserver {
- public:
-  explicit TextPcapPacketObserver(absl::string_view name) : name_(name) {}
-
-  void OnSentPacket(dcsctp::TimeMs now, rtc::ArrayView<const uint8_t> payload) {
-    PrintPacket("O ", now, payload);
-  }
-
-  void OnReceivedPacket(dcsctp::TimeMs now,
-                        rtc::ArrayView<const uint8_t> payload) {
-    PrintPacket("I ", now, payload);
-  }
-
- private:
-  void PrintPacket(absl::string_view prefix,
-                   dcsctp::TimeMs now,
-                   rtc::ArrayView<const uint8_t> payload) {
-    rtc::StringBuilder s;
-    s << "\n" << prefix;
-    int64_t remaining = *now % (24 * 60 * 60 * 1000);
-    int hours = remaining / (60 * 60 * 1000);
-    remaining = remaining % (60 * 60 * 1000);
-    int minutes = remaining / (60 * 1000);
-    remaining = remaining % (60 * 1000);
-    int seconds = remaining / 1000;
-    int ms = remaining % 1000;
-    s.AppendFormat("%02d:%02d:%02d.%03d", hours, minutes, seconds, ms);
-    s << " 0000";
-    for (uint8_t byte : payload) {
-      s.AppendFormat(" %02x", byte);
-    }
-    s << " # SCTP_PACKET " << name_;
-    RTC_LOG(LS_VERBOSE) << s.str();
-  }
-
-  const std::string name_;
-};
-
 }  // namespace
 
 DcSctpTransport::DcSctpTransport(rtc::Thread* network_thread,
@@ -174,7 +157,8 @@ bool DcSctpTransport::Start(int local_sctp_port,
 
     std::unique_ptr<dcsctp::PacketObserver> packet_observer;
     if (RTC_LOG_CHECK_LEVEL(LS_VERBOSE)) {
-      packet_observer = std::make_unique<TextPcapPacketObserver>(debug_name_);
+      packet_observer =
+          std::make_unique<dcsctp::TextPcapPacketObserver>(debug_name_);
     }
 
     dcsctp::DcSctpSocketFactory factory;
@@ -413,6 +397,14 @@ void DcSctpTransport::OnAborted(dcsctp::ErrorKind error,
                     << "->OnAborted(error=" << dcsctp::ToString(error)
                     << ", message=" << message << ").";
   ready_to_send_data_ = false;
+  RTCError rtc_error(RTCErrorType::OPERATION_ERROR_WITH_DATA,
+                     std::string(message));
+  rtc_error.set_error_detail(RTCErrorDetailType::SCTP_FAILURE);
+  auto code = ToErrorCauseCode(error);
+  if (code.has_value()) {
+    rtc_error.set_sctp_cause_code(static_cast<uint16_t>(*code));
+  }
+  SignalClosedAbruptly(rtc_error);
 }
 
 void DcSctpTransport::OnConnected() {
@@ -520,7 +512,7 @@ void DcSctpTransport::OnTransportReadPacket(
 void DcSctpTransport::OnTransportClosed(
     rtc::PacketTransportInternal* transport) {
   RTC_LOG(LS_VERBOSE) << debug_name_ << "->OnTransportClosed().";
-  SignalClosedAbruptly();
+  SignalClosedAbruptly({});
 }
 
 void DcSctpTransport::MaybeConnectSocket() {

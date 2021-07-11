@@ -436,7 +436,6 @@ class WebRtcVideoChannel : public VideoMediaChannel,
         webrtc::Call* call,
         const StreamParams& sp,
         webrtc::VideoReceiveStream::Config config,
-        webrtc::VideoDecoderFactory* decoder_factory,
         bool default_stream,
         const std::vector<VideoCodecSettings>& recv_codecs,
         const webrtc::FlexfecReceiveStream::Config& flexfec_config);
@@ -484,7 +483,10 @@ class WebRtcVideoChannel : public VideoMediaChannel,
    private:
     void RecreateWebRtcVideoStream();
 
-    void ConfigureCodecs(const std::vector<VideoCodecSettings>& recv_codecs);
+    // Applies a new receive codecs configration to `config_`. Returns true
+    // if the internal stream needs to be reconstructed, or false if no changes
+    // were applied.
+    bool ConfigureCodecs(const std::vector<VideoCodecSettings>& recv_codecs);
 
     std::string GetCodecNameFromPayloadType(int payload_type);
 
@@ -500,8 +502,6 @@ class WebRtcVideoChannel : public VideoMediaChannel,
     webrtc::VideoReceiveStream::Config config_;
     webrtc::FlexfecReceiveStream::Config flexfec_config_;
     webrtc::FlexfecReceiveStream* flexfec_stream_;
-
-    webrtc::VideoDecoderFactory* const decoder_factory_;
 
     webrtc::Mutex sink_lock_;
     rtc::VideoSinkInterface<webrtc::VideoFrame>* sink_

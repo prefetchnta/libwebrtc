@@ -214,6 +214,11 @@ int LibaomAv1Encoder::InitEncode(const VideoCodec* codec_settings,
   cfg_.kf_mode = AOM_KF_DISABLED;
   cfg_.rc_min_quantizer = kQpMin;
   cfg_.rc_max_quantizer = encoder_settings_.qpMax;
+  cfg_.rc_undershoot_pct = 50;
+  cfg_.rc_overshoot_pct = 50;
+  cfg_.rc_buf_initial_sz = 600;
+  cfg_.rc_buf_optimal_sz = 600;
+  cfg_.rc_buf_sz = 1000;
   cfg_.g_usage = kUsageProfile;
   cfg_.g_error_resilient = 0;
   // Low-latency settings.
@@ -588,11 +593,25 @@ int32_t LibaomAv1Encoder::Encode(
     // kNative. As a workaround to this, we perform ToI420() a second time.
     // TODO(https://crbug.com/webrtc/12602): When Android buffers have a correct
     // ToI420() implementaion, remove his workaround.
+    if (!converted_buffer) {
+      RTC_LOG(LS_ERROR) << "Failed to convert "
+                        << VideoFrameBufferTypeToString(
+                               converted_buffer->type())
+                        << " image to I420. Can't encode frame.";
+      return WEBRTC_VIDEO_CODEC_ENCODER_FAILURE;
+    }
     if (converted_buffer->type() != VideoFrameBuffer::Type::kI420 &&
         converted_buffer->type() != VideoFrameBuffer::Type::kI420A) {
       converted_buffer = converted_buffer->ToI420();
       RTC_CHECK(converted_buffer->type() == VideoFrameBuffer::Type::kI420 ||
                 converted_buffer->type() == VideoFrameBuffer::Type::kI420A);
+    }
+    if (!converted_buffer) {
+      RTC_LOG(LS_ERROR) << "Failed to convert "
+                        << VideoFrameBufferTypeToString(
+                               converted_buffer->type())
+                        << " image to I420. Can't encode frame.";
+      return WEBRTC_VIDEO_CODEC_ENCODER_FAILURE;
     }
     prepped_input_frame = VideoFrame(converted_buffer, frame.timestamp(),
                                      frame.render_time_ms(), frame.rotation());

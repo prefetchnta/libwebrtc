@@ -2320,6 +2320,7 @@ bool WebRtcVoiceMediaChannel::GetStats(VoiceMediaInfo* info,
     sinfo.retransmitted_packets_sent = stats.retransmitted_packets_sent;
     sinfo.packets_lost = stats.packets_lost;
     sinfo.fraction_lost = stats.fraction_lost;
+    sinfo.nacks_rcvd = stats.nacks_rcvd;
     sinfo.codec_name = stats.codec_name;
     sinfo.codec_payload_type = stats.codec_payload_type;
     sinfo.jitter_ms = stats.jitter_ms;
@@ -2418,6 +2419,10 @@ bool WebRtcVoiceMediaChannel::GetStats(VoiceMediaInfo* info,
     rinfo.sender_reports_packets_sent = stats.sender_reports_packets_sent;
     rinfo.sender_reports_bytes_sent = stats.sender_reports_bytes_sent;
     rinfo.sender_reports_reports_count = stats.sender_reports_reports_count;
+
+    if (recv_nack_enabled_) {
+      rinfo.nacks_sent = stats.nacks_sent;
+    }
 
     info->receivers.push_back(rinfo);
   }

@@ -59,9 +59,13 @@ class VideoReceiveStream : public MediaReceiveStream {
   // TODO(mflodman) Move all these settings to VideoDecoder and move the
   // declaration to common_types.h.
   struct Decoder {
+    Decoder(SdpVideoFormat video_format, int payload_type);
     Decoder();
     Decoder(const Decoder&);
     ~Decoder();
+
+    bool operator==(const Decoder& other) const;
+
     std::string ToString() const;
 
     SdpVideoFormat video_format;
@@ -150,7 +154,8 @@ class VideoReceiveStream : public MediaReceiveStream {
    public:
     Config() = delete;
     Config(Config&&);
-    explicit Config(Transport* rtcp_send_transport);
+    Config(Transport* rtcp_send_transport,
+           VideoDecoderFactory* decoder_factory = nullptr);
     Config& operator=(Config&&);
     Config& operator=(const Config&) = delete;
     ~Config();

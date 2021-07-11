@@ -840,11 +840,12 @@ class RTCStatsReportVerifier {
       verifier.TestMemberIsUndefined(inbound_stream.frames_per_second);
     }
     verifier.TestMemberIsUndefined(inbound_stream.frame_bit_depth);
+    verifier.TestMemberIsNonNegative<double>(
+        inbound_stream.jitter_buffer_delay);
+    verifier.TestMemberIsNonNegative<uint64_t>(
+        inbound_stream.jitter_buffer_emitted_count);
     if (inbound_stream.media_type.is_defined() &&
         *inbound_stream.media_type == "video") {
-      verifier.TestMemberIsUndefined(inbound_stream.jitter_buffer_delay);
-      verifier.TestMemberIsUndefined(
-          inbound_stream.jitter_buffer_emitted_count);
       verifier.TestMemberIsUndefined(inbound_stream.total_samples_received);
       verifier.TestMemberIsUndefined(inbound_stream.concealed_samples);
       verifier.TestMemberIsUndefined(inbound_stream.silent_concealed_samples);
@@ -864,10 +865,6 @@ class RTCStatsReportVerifier {
       verifier.TestMemberIsUndefined(inbound_stream.fir_count);
       verifier.TestMemberIsUndefined(inbound_stream.pli_count);
       verifier.TestMemberIsUndefined(inbound_stream.nack_count);
-      verifier.TestMemberIsNonNegative<double>(
-          inbound_stream.jitter_buffer_delay);
-      verifier.TestMemberIsNonNegative<uint64_t>(
-          inbound_stream.jitter_buffer_emitted_count);
       verifier.TestMemberIsPositive<uint64_t>(
           inbound_stream.total_samples_received);
       verifier.TestMemberIsNonNegative<uint64_t>(
@@ -937,7 +934,6 @@ class RTCStatsReportVerifier {
                                        RTCVideoSourceStats::kType);
       verifier.TestMemberIsNonNegative<uint32_t>(outbound_stream.fir_count);
       verifier.TestMemberIsNonNegative<uint32_t>(outbound_stream.pli_count);
-      verifier.TestMemberIsNonNegative<uint32_t>(outbound_stream.nack_count);
       if (*outbound_stream.frames_encoded > 0) {
         verifier.TestMemberIsNonNegative<uint64_t>(outbound_stream.qp_sum);
       } else {
@@ -946,11 +942,11 @@ class RTCStatsReportVerifier {
     } else {
       verifier.TestMemberIsUndefined(outbound_stream.fir_count);
       verifier.TestMemberIsUndefined(outbound_stream.pli_count);
-      verifier.TestMemberIsUndefined(outbound_stream.nack_count);
       verifier.TestMemberIsIDReference(outbound_stream.media_source_id,
                                        RTCAudioSourceStats::kType);
       verifier.TestMemberIsUndefined(outbound_stream.qp_sum);
     }
+    verifier.TestMemberIsNonNegative<uint32_t>(outbound_stream.nack_count);
     verifier.TestMemberIsOptionalIDReference(
         outbound_stream.remote_id, RTCRemoteInboundRtpStreamStats::kType);
     verifier.TestMemberIsNonNegative<uint32_t>(outbound_stream.packets_sent);
@@ -1082,6 +1078,12 @@ class RTCStatsReportVerifier {
     verifier.TestMemberIsNonNegative<double>(audio_source.audio_level);
     verifier.TestMemberIsPositive<double>(audio_source.total_audio_energy);
     verifier.TestMemberIsPositive<double>(audio_source.total_samples_duration);
+    // TODO(hbos): |echo_return_loss| and |echo_return_loss_enhancement| are
+    // flaky on msan bot (sometimes defined, sometimes undefined). Should the
+    // test run until available or is there a way to have it always be
+    // defined? crbug.com/627816
+    verifier.MarkMemberTested(audio_source.echo_return_loss, true);
+    verifier.MarkMemberTested(audio_source.echo_return_loss_enhancement, true);
     return verifier.ExpectAllMembersSuccessfullyTested();
   }
 
